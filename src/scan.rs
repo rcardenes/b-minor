@@ -1,0 +1,633 @@
+use std::{
+    cmp::PartialEq,
+    iter::{Iterator, Peekable},
+};
+
+use crate::sym::Strings;
+
+fn fatal(msg: &str, pos: Pos) -> ! {
+    panic!("{} at {},{}", msg, pos.line, pos.col)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TokenKind {
+    Comma,                      // ,
+    Semi,                       // ;
+    Colon,                      // :
+    Assign,                     // =
+    Plus,                       // +
+    Minus,                      // -
+    Star,                       // *
+    Slash,                      // /
+    Incr,                       // ++
+    Decr,                       // --
+    Caret,                      // ^
+    Not,                        // !
+    Mod,                        // %
+    And,                        // &&
+    Or,                         // ||
+    Eql,                        // ==
+    Neq,                        // !=
+    Lss,                        // <
+    Leq,                        // <=
+    Gtr,                        // >
+    Geq,                        // >=
+
+    LeftBrk,                    // [
+    RightBrk,                   // ]
+    LeftParen,                  // (
+    RightParen,                 // )
+    LeftAngl,                   // {
+    RightAngl,                  // }
+
+    // Types
+    Array,                      // array
+    Bool,                       // boolean
+    Char,                       // char
+    Integer,                    // integer
+    String,                     // string
+    Void,                       // void
+
+    // Other Keywords
+    Else,                       // else
+    For,                        // for
+    Function,                   // function
+    If,                         // if
+    Print,                      // print
+    Return,                     // return
+
+    Ident(usize),               // Ident names are stored into a separate structure.
+                                // We just store an index here.
+
+    // Literals
+    True,                       // true
+    False,                      // false
+    IntLit(i64),
+    CharLit(char),
+    StringLit(usize),           // String literals are stored into a separate structure.
+                                // We just store an index here.
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pos { line: usize, col: usize }
+
+#[derive(Clone, Copy, Debug, Eq)]
+pub struct Token {
+    kind: TokenKind,
+    pos: Pos,
+}
+
+impl PartialEq for Token {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+    }
+}
+
+impl Token {
+    pub fn at(kind: TokenKind, line: usize, col: usize) -> Self {
+        Token { kind, pos: Pos { line, col } }
+    }
+}
+
+#[derive(Debug)]
+pub struct Char {
+    c: char,
+    pos: Pos,
+}
+
+pub struct Scanner<I>
+    where I: Iterator<Item=char>,
+{
+    source: Peekable<I>,
+    line: usize,
+    col: usize,
+    last_char: Option<Char>,
+    last_token: Option<Token>,
+    strings: Strings,
+}
+
+impl<I> Scanner<I>
+    where I: Iterator<Item=char>,
+{
+    pub fn new(source: Peekable<I>) -> Self {
+        Scanner {
+            source,
+            line: 1,
+            col: 1,
+            last_char: None,
+            last_token: None,
+            strings: Strings::new(),
+        }
+    }
+
+    fn put_char(&mut self, c: Char) {
+        self.last_char = Some(c)
+    }
+
+    pub fn put_token(&mut self, token: Token) {
+        self.last_token = Some(token)
+    }
+
+    fn consume_char(&mut self, c: char) -> Char {
+        let (col, line) = (self.col, self.line);
+
+        if c == '\n' {
+            self.col = 1;
+            self.line += 1;
+        } else {
+            self.col += 1;
+        }
+
+        Char{ c, pos: Pos { line, col }}
+    }
+
+    fn next_if(&mut self, test: impl FnOnce(&char) -> bool) -> Option<Char> {
+        if let Some(c) = self.last_char.take() {
+            Some(c)
+        } else {
+            self.source.next_if(test)
+                .map(|c| self.consume_char(c))
+        }
+    }
+
+    fn next(&mut self) -> Option<Char> {
+        self.next_if(|_| true)
+    }
+
+    fn next_if_eq(&mut self, tc: char) -> Option<Char> {
+        self.next_if(|&c| c == tc)
+    }
+
+    pub fn must_be(&mut self, c: char) {
+        let Some(ch) = self.next() else { panic!("Found EOF while expecting char '{c}'") };
+
+        if ch.c != c {
+            let msg = format!("Expected '{c}' but found '{}' instead", ch.c);
+            fatal(&msg, ch.pos)
+        }
+    }
+
+    fn process_line_comment(&mut self) {
+        while let Some(ch) = self.next() {
+            if ch.c == '\n' {
+                break;
+            }
+        }
+    }
+
+    fn process_multiline_comment(&mut self, pos: Pos) {
+        while let Some(ch) = self.next() {
+            if ch.c == '*' {
+                let Some(ch) = self.next() else { fatal("Found EOF while processing comment starting", pos) };
+
+                if ch.c == '/' {
+                    break;
+                }
+            }
+        }
+    }
+
+    fn skip(&mut self) -> Option<Char> {
+        while let Some(ch) = self.next() {
+            if !ch.c.is_whitespace() {
+                return Some(ch)
+            }
+        }
+
+        None
+    }
+
+    pub fn scan_char(&mut self) -> char {
+        let Some(Char { c, pos }) = self.next() else { panic!("Found EOF while processing a character literal") };
+
+        let ret = match c {
+            '\'' => fatal("Empty character", pos),
+            '\\' => if self.next_if_eq('n').is_some() {
+                '\n'
+            } else if self.next_if_eq('0').is_some() {
+                '\0'
+            } else if let Some(ch) = self.next() {
+                ch.c
+            } else {
+                panic!("Found EOF while processing a character literal")
+            },
+            _ => c,
+        };
+        self.must_be('\'');
+
+        ret
+    }
+
+    pub fn scan_string(&mut self, pos: Pos) -> String {
+        let mut vec_chars = vec![];
+
+        while let Some(Char { c, .. }) = self.next() {
+            match c {
+                '"' => return vec_chars.into_iter().collect(),
+                '\\' => if self.next_if_eq('n').is_some() {
+                    vec_chars.push('\n');
+                } else if self.next_if_eq('0').is_some() {
+                    vec_chars.push('\0');
+                },
+                c => vec_chars.push(c)
+            }
+        }
+
+        fatal("Found EOF while recognizing string that started", pos)
+    }
+
+    pub fn scan_ident(&mut self, first: char) -> String {
+        let mut vec_chars = vec![first];
+
+        while let Some(ch) = self.next_if(|c| c.is_ascii_alphanumeric() || *c == '_') {
+            vec_chars.push(ch.c);
+        }
+
+        vec_chars.into_iter().collect()
+    }
+
+    pub fn scan_number(&mut self, first: char, radix: u32) -> i64 {
+        let mut res = first.to_digit(radix).unwrap() as i64;
+
+        while let Some(ch) = self.next_if(|&c| c.is_ascii_digit()) {
+            res = res * 10 + ch.c.to_digit(radix).unwrap() as i64;
+        }
+
+        res
+    }
+
+    fn scan_alternate_operators(&mut self, pos: Pos, follower: char, if_true: TokenKind, if_false: TokenKind) -> Option<Token> {
+        let kind = if self.next_if_eq(follower).is_some() { if_true } else { if_false };
+        Some(Token { kind, pos })
+    }
+
+    pub fn scan(&mut self) -> Option<Token> {
+        if let Some(t) = self.last_token.take() {
+            Some(t)
+        } else {
+            if let Some(Char { c, pos }) = self.skip() {
+                match c {
+                    ',' => Some(Token { kind: TokenKind::Comma, pos }),
+                    ';' => Some(Token { kind: TokenKind::Semi, pos }),
+                    ':' => Some(Token { kind: TokenKind::Colon, pos }),
+                    '<' => self.scan_alternate_operators(pos, '=', TokenKind::Leq, TokenKind::Lss),
+                    '>' => self.scan_alternate_operators(pos, '=', TokenKind::Geq, TokenKind::Gtr),
+                    '!' => self.scan_alternate_operators(pos, '=', TokenKind::Neq, TokenKind::Not),
+                    '=' => self.scan_alternate_operators(pos, '=', TokenKind::Eql, TokenKind::Assign),
+                    '^' => Some(Token { kind: TokenKind::Caret, pos }),
+                    '+' => self.scan_alternate_operators(pos, '+', TokenKind::Incr, TokenKind::Plus),
+                    '-' => self.scan_alternate_operators(pos, '-', TokenKind::Decr, TokenKind::Minus),
+                    '*' => Some(Token { kind: TokenKind::Star, pos }),
+                    '/' => {
+                        let prelim = Some(Token { kind: TokenKind::Slash, pos });
+                        match self.next() {
+                            Some(Char { c: '/', .. }) => {
+                                self.process_line_comment(); self.scan()
+                            },
+                            Some(Char { c: '*', .. }) => {
+                                self.process_multiline_comment(pos); self.scan()
+                            },
+                            Some(c) => {
+                                self.put_char(c);
+                                prelim
+                            },
+                            _ => prelim,
+                        }
+                    },
+                    '%' => Some(Token { kind: TokenKind::Mod, pos }),
+                    '&' => if self.next_if_eq('&').is_some() {
+                        Some(Token { kind: TokenKind::And, pos })
+                    } else {
+                        fatal("Expected '&&'", pos)
+                    },
+                    '|' => if self.next_if_eq('|').is_some() {
+                        Some(Token { kind: TokenKind::Or, pos })
+                    } else {
+                        fatal("Expected '||'", pos)
+                    },
+                    '(' => Some(Token { kind: TokenKind::LeftParen, pos }),
+                    ')' => Some(Token { kind: TokenKind::RightParen, pos }),
+                    '[' => Some(Token { kind: TokenKind::LeftBrk, pos }),
+                    ']' => Some(Token { kind: TokenKind::RightBrk, pos }),
+                    '{' => Some(Token { kind: TokenKind::LeftAngl, pos }),
+                    '}' => Some(Token { kind: TokenKind::RightAngl, pos }),
+                    '\'' => Some(Token { kind: TokenKind::CharLit(self.scan_char()), pos }),
+                    '"' => {
+                        let st = self.scan_string(pos);
+                        Some(Token { kind: TokenKind::StringLit(self.strings.add(st)), pos })
+                    },
+                    c if c.is_ascii_digit() => {
+                        // I've added the radix so that later on I can scan octal/hexadecimal
+                        // as well.
+                        let number = self.scan_number(c, 10);
+                        Some(Token { kind: TokenKind::IntLit(number), pos })
+                    }
+                    c if c.is_alphabetic() || c == '_' => {
+                        // Scan an identifier or keyword
+                        let ident = self.scan_ident(c);
+                        if let Some(kind) = self.keyword(&ident) {
+                            Some(Token { kind, pos })
+                        } else {
+                            Some(Token { kind: TokenKind::Ident(self.strings.add(ident)), pos })
+                        }
+                    },
+                    c => {
+                        let msg = format!("Unrecognized character '{c}'");
+                        fatal(&msg, pos)
+                    }
+                }
+            } else {
+                None
+            }
+        }
+    }
+
+    fn keyword(&self, name: &str) -> Option<TokenKind> {
+        match name {
+            "array" => Some(TokenKind::Array),
+            "boolean" => Some(TokenKind::Bool),
+            "char" => Some(TokenKind::Char),
+            "integer" => Some(TokenKind::Integer),
+            "string" => Some(TokenKind::String),
+            "void" => Some(TokenKind::Void),
+            "else" => Some(TokenKind::Else),
+            "for" => Some(TokenKind::For),
+            "function" => Some(TokenKind::Function),
+            "if" => Some(TokenKind::If),
+            "print" => Some(TokenKind::Print),
+            "return" => Some(TokenKind::Return),
+            "true" => Some(TokenKind::True),
+            "false" => Some(TokenKind::False),
+            _ => None,
+        }
+    }
+
+
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::string::IntoChars;
+    use rstest::{rstest, fixture};
+
+    type TestScanner = Scanner<IntoChars>;
+
+    #[fixture]
+    fn scanner(#[default("")] code: &str) -> TestScanner {
+        let s = String::from(code);
+        Scanner::new(s.into_chars().peekable())
+    }
+
+    #[test]
+    fn test_token_at() {
+        let t = Token::at(TokenKind::Semi, 3, 7);
+        assert_eq!(t.kind, TokenKind::Semi);
+        assert_eq!(t.pos, Pos { line: 3, col: 7 });
+    }
+
+    #[rstest]
+    #[case(TokenKind::Incr, TokenKind::Incr)]
+    #[case(TokenKind::Comma, TokenKind::Comma)]
+    #[case(TokenKind::Semi, TokenKind::Semi)]
+    #[case(TokenKind::If, TokenKind::If)]
+    fn test_unit_variant_eq(#[case] a: TokenKind, #[case] b: TokenKind) {
+        assert_eq!(a, b);
+    }
+
+    #[rstest]
+    #[case(TokenKind::Incr, TokenKind::Comma)]
+    #[case(TokenKind::Semi, TokenKind::Colon)]
+    #[case(TokenKind::If, TokenKind::IntLit(0))]
+    fn test_unit_variant_ne(#[case] a: TokenKind, #[case] b: TokenKind) {
+        assert_ne!(a, b);
+    }
+
+    #[rstest]
+    fn test_token_kind_int_lit(#[values(42, 0, -1, i64::MAX, i64::MIN)] val: i64) {
+        assert_eq!(TokenKind::IntLit(val), TokenKind::IntLit(val));
+        assert_ne!(TokenKind::IntLit(val), TokenKind::IntLit(val.wrapping_add(1)));
+    }
+
+    #[test]
+    fn test_token_clone() {
+        let t = Token::at(TokenKind::If, 1, 2);
+        assert_eq!(t.clone(), t);
+    }
+
+    #[test]
+    fn test_token_equality_does_not_depend_on_position() {
+        let a = Token::at(TokenKind::Star, 1, 1);
+        let b = Token::at(TokenKind::Star, 1, 2);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_debug_format() {
+        let t = Token::at(TokenKind::Plus, 0, 0);
+        let d = format!("{:?}", t);
+        assert!(!d.is_empty());
+    }
+
+    #[rstest]
+    fn test_token_kind_ident(#[values(0, usize::MAX)] val: usize) {
+        assert_eq!(TokenKind::Ident(val), TokenKind::Ident(val));
+    }
+
+    #[rstest]
+    fn test_token_kind_string_lit(#[values(5, 0)] val: usize) {
+        assert_eq!(TokenKind::StringLit(val), TokenKind::StringLit(val));
+    }
+
+    #[test]
+    fn test_token_kind_ident_vs_string_lit() {
+        assert_ne!(TokenKind::Ident(3), TokenKind::StringLit(3));
+    }
+
+    #[test]
+    fn test_token_copy() {
+        let a = Token::at(TokenKind::Assign, 2, 4);
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_pos_zero() {
+        let t = Token::at(TokenKind::IntLit(0), 0, 0);
+        assert_eq!(t.pos, Pos { line: 0, col: 0 });
+    }
+
+    #[rstest]
+    #[case(",", TokenKind::Comma)]
+    #[case(";", TokenKind::Semi)]
+    #[case(":", TokenKind::Colon)]
+    #[case("=", TokenKind::Assign)]
+    #[case("==", TokenKind::Eql)]
+    #[case("!", TokenKind::Not)]
+    #[case("!=", TokenKind::Neq)]
+    #[case("<", TokenKind::Lss)]
+    #[case("<=", TokenKind::Leq)]
+    #[case(">", TokenKind::Gtr)]
+    #[case(">=", TokenKind::Geq)]
+    #[case("^", TokenKind::Caret)]
+    #[case("+", TokenKind::Plus)]
+    #[case("-", TokenKind::Minus)]
+    #[case("*", TokenKind::Star)]
+    #[case("/", TokenKind::Slash)]
+    #[case("(", TokenKind::LeftParen)]
+    #[case(")", TokenKind::RightParen)]
+    #[case("[", TokenKind::LeftBrk)]
+    #[case("]", TokenKind::RightBrk)]
+    #[case("{", TokenKind::LeftAngl)]
+    #[case("}", TokenKind::RightAngl)]
+    fn test_basic_tokenization(#[case] input: &str, #[case] kind: TokenKind) {
+        assert_eq!(scanner(input).scan(), Some(Token::at(kind, 1, 1)));
+    }
+
+    #[rstest]
+    #[case("1", 1)]
+    #[case("15", 15)]
+    #[case("999999", 999999)]
+    fn test_int_literal(#[case] input: &str, #[case] expected: i64) {
+        assert_eq!(scanner(input).scan(), Some(Token::at(TokenKind::IntLit(expected), 1, 1)))
+    }
+
+    #[rstest]
+    #[case("++", TokenKind::Incr)]
+    #[case("--", TokenKind::Decr)]
+    #[case("%", TokenKind::Mod)]
+    fn test_remaining_operators(#[case] input: &str, #[case] kind: TokenKind) {
+        assert_eq!(scanner(input).scan(), Some(Token::at(kind, 1, 1)));
+    }
+
+    #[rstest]
+    #[case("&&", TokenKind::And)]
+    #[case("||", TokenKind::Or)]
+    fn test_double_operators(#[case] input: &str, #[case] kind: TokenKind) {
+        assert_eq!(scanner(input).scan(), Some(Token::at(kind, 1, 1)));
+    }
+
+    #[test]
+    fn test_line_comment() {
+        assert_eq!(scanner("// comment\n,").scan(), Some(Token::at(TokenKind::Comma, 2, 1)));
+    }
+
+    #[test]
+    fn test_block_comment() {
+        assert_eq!(scanner("/* comment */,").scan(), Some(Token::at(TokenKind::Comma, 1, 13)));
+    }
+
+    #[rstest]
+    #[case("'a'", 'a')]
+    #[case("'\\n'", '\n')]
+    #[case("'\\0'", '\0')]
+    fn test_char_literal(#[case] input: &str, #[case] expected: char) {
+        assert_eq!(scanner(input).scan(), Some(Token::at(TokenKind::CharLit(expected), 1, 1)));
+    }
+
+    #[rstest]
+    #[case("\"hello\"", 0)]
+    #[case("\"\"", 0)]
+    #[case("\"a b c\"", 0)]
+    fn test_string_literal(#[case] input: &str, #[case] expected: usize) {
+        assert_eq!(scanner(input).scan(), Some(Token::at(TokenKind::StringLit(expected), 1, 1)));
+    }
+
+    #[test]
+    fn test_string_interning() {
+        let mut s = scanner("\"hello\" \"hello\"");
+        assert_eq!(s.scan(), Some(Token::at(TokenKind::StringLit(0), 1, 1)));
+        assert_eq!(s.scan(), Some(Token::at(TokenKind::StringLit(0), 1, 9)));
+    }
+
+    #[test]
+    fn test_string_escape_newline() {
+        let mut s = scanner("\"a\\nb\"");
+        assert_eq!(s.scan(), Some(Token::at(TokenKind::StringLit(0), 1, 1)));
+    }
+
+    #[test]
+    fn test_string_escape_null() {
+        let mut s = scanner("\"a\\0b\"");
+        assert_eq!(s.scan(), Some(Token::at(TokenKind::StringLit(0), 1, 1)));
+    }
+
+    #[test]
+    fn test_string_then_token() {
+        let mut s = scanner("\"hello\",");
+        assert_eq!(s.scan(), Some(Token::at(TokenKind::StringLit(0), 1, 1)));
+        assert_eq!(s.scan(), Some(Token::at(TokenKind::Comma, 1, 8)));
+    }
+
+    #[rstest]
+    #[case("array", TokenKind::Array)]
+    #[case("boolean", TokenKind::Bool)]
+    #[case("char", TokenKind::Char)]
+    #[case("integer", TokenKind::Integer)]
+    #[case("string", TokenKind::String)]
+    #[case("void", TokenKind::Void)]
+    #[case("else", TokenKind::Else)]
+    #[case("for", TokenKind::For)]
+    #[case("function", TokenKind::Function)]
+    #[case("if", TokenKind::If)]
+    #[case("print", TokenKind::Print)]
+    #[case("return", TokenKind::Return)]
+    #[case("true", TokenKind::True)]
+    #[case("false", TokenKind::False)]
+    fn test_keyword(#[case] input: &str, #[case] kind: TokenKind) {
+        assert_eq!(scanner(input).scan(), Some(Token::at(kind, 1, 1)));
+    }
+
+    #[rstest]
+    #[case("foo", 0)]
+    #[case("_var", 0)]
+    #[case("x123", 0)]
+    fn test_identifier(#[case] input: &str, #[case] expected: usize) {
+        assert_eq!(scanner(input).scan(), Some(Token::at(TokenKind::Ident(expected), 1, 1)));
+    }
+
+    #[test]
+    fn test_ident_interning() {
+        let mut s = scanner("foo foo");
+        assert_eq!(s.scan(), Some(Token::at(TokenKind::Ident(0), 1, 1)));
+        assert_eq!(s.scan(), Some(Token::at(TokenKind::Ident(0), 1, 5)));
+    }
+
+    #[test]
+    fn test_ident_then_token() {
+        let mut s = scanner("foo;");
+        assert_eq!(s.scan(), Some(Token::at(TokenKind::Ident(0), 1, 1)));
+        assert_eq!(s.scan(), Some(Token::at(TokenKind::Semi, 1, 4)));
+    }
+
+    #[test]
+    fn test_ident_and_string_interning_shared() {
+        let mut s = scanner("foo \"foo\"");
+        assert_eq!(s.scan(), Some(Token::at(TokenKind::Ident(0), 1, 1)));
+        assert_eq!(s.scan(), Some(Token::at(TokenKind::StringLit(0), 1, 5)));
+    }
+
+    #[test]
+    fn test_ident_not_keyword() {
+        assert_eq!(scanner("ifx").scan(), Some(Token::at(TokenKind::Ident(0), 1, 1)));
+    }
+
+    #[test]
+    fn test_whitespace_between_tokens() {
+        let mut s = scanner("  ,  ;");
+        assert_eq!(s.scan(), Some(Token::at(TokenKind::Comma, 1, 3)));
+        assert_eq!(s.scan(), Some(Token::at(TokenKind::Semi, 1, 6)));
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected '&&'")]
+    fn test_single_ampersand_fails() {
+        scanner("&").scan();
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected '||'")]
+    fn test_single_pipe_fails() {
+        scanner("|").scan();
+    }
+}
