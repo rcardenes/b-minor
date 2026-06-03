@@ -13,6 +13,13 @@ hopefully it won't be needed!)
 The main purpose of this implementation is working on IR and optimization, as
 approached by this book.
 
+## AI Usage (or Lack Thereof)
+
+As mentioned above, the purpose of writing this compiler is purely educational,
+and thus using AI for writing its code would be pointless. I'll be using it to
+along with `cargo tarpaulin` to check for test coverage and to suggest and
+generate test cases (which can be rather tedious).
+
 ## Language Features
 
 B-Minor is designed to have object-code compatible with ordinary C, which makes
