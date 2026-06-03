@@ -196,13 +196,21 @@ Note 6: The expressions are not included in the grammar - use your imagination :
 
     parameter             : identifier , ':' , ( type | array_type ) ;
 
-    array_type            : 'array' , '[' , ']' , type ;
+    array_type            : array_type_pref , { array_type_pref } , type ;
+
+    array_type_pref       : 'array' , '[' , ']' ;
 
     var_declaration       : identifier , ':' ( scalar_declaration | array_declaration ) , ';' ;
 
-    array_declaration     : 'array' , '[' , integer_literal , ']' , type ,  [ array_initialization ] ;
+    array_declaration     : array_decl_pref , { array_decl_pref } , type ,  [ array_initialization ] ;
 
-    array_initialization  : '{' , literal , { ',' , literal } , '}' ;
+    array_decl_pref       : 'array' , '[' , integer_literal , ']' ;
+
+    array_initialization  : '{' , array_init_element , { ',' , array_init_element } , '}' ;
+
+    array_init_element    : literal
+                          | array_initialization
+                          ;
 
     scalar_declaration    : type , [ var_initialization ] , ';' ;
 
