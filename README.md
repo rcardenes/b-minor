@@ -164,24 +164,29 @@ Note 6: The expressions are not included in the grammar - use your imagination :
                           | if_statement
                           | print_statement
                           | return_statement
+                          | block
+                          ;
+
+    block                 : '{' , { decl_or_statement } , '}' ;
+
+    decl_or_statement     : var_declaration
+                          | array_declaration
+                          | statement
                           ;
 
     assignment_statement  : assignment , ';'
 
-    for_statement         : 'for' , '(' , [ assignment , { ',' , assignment } ] , ';' , expression , ';' , expression , ')'
-                                  , '{' decl_and_statements , '}' ;
+    for_statement         : 'for' , '(' , [ assignment , { ',' , assignment } ] , ';' , expression , ';' , expression , ')' , block ;
 
     assignment            : identifier , '=' , expression ;
 
-    if_statement          : 'if' , '(' , expression , ')' , '{', decl_and_statements , '}' , [ else_st ] ;
-
-    else_st               : 'else' , '{' , decl_and_statements , '}' ;
+    if_statement          : 'if' , '(' , expression , ')' , block , [ 'else' , block ] ;
 
     print_statement       : 'print' , expression , { ',' , expression } , ';' ;
 
     return_statement      : 'return' , expression ;
 
-    function_declaration  : function_signature , '=' , '{' , decl_and_statements , '}' ;
+    function_declaration  : function_signature , '=' , block ;
 
     function_prototype    : function_signature , ';' ;
 
@@ -192,8 +197,6 @@ Note 6: The expressions are not included in the grammar - use your imagination :
     parameter             : identifier , ':' , ( type | array_type ) ;
 
     array_type            : 'array' , '[' , ']' , type ;
-
-    decl_and_statements   : ( var_declaration | array_declaration | statement ) , [ decl_and_statements ] ;
 
     var_declaration       : identifier , ':' ( scalar_declaration | array_declaration ) , ';' ;
 
