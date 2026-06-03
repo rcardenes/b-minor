@@ -5,7 +5,7 @@ use std::{
 
 use crate::sym::Strings;
 
-fn fatal(msg: &str, pos: Pos) -> ! {
+pub fn fatal(msg: &str, pos: Pos) -> ! {
     panic!("{} at {},{}", msg, pos.line, pos.col)
 }
 
@@ -79,8 +79,8 @@ impl Pos {
 
 #[derive(Clone, Copy, Debug, Eq)]
 pub struct Token {
-    kind: TokenKind,
-    pos: Pos,
+    pub(crate) kind: TokenKind,
+    pub(crate) pos: Pos,
 }
 
 impl PartialEq for Token {
@@ -92,6 +92,18 @@ impl PartialEq for Token {
 impl Token {
     pub fn at(kind: TokenKind, pos: Pos) -> Self {
         Token { kind, pos }
+    }
+
+    pub fn is_type(&self) -> bool {
+        matches!(self.kind, TokenKind::Array
+                          | TokenKind::Bool
+                          | TokenKind::Char
+                          | TokenKind::Integer
+                          | TokenKind::String)
+    }
+
+    pub fn is_function_type(&self) -> bool {
+        self.kind == TokenKind::Void || self.is_type()
     }
 }
 
