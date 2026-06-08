@@ -1,12 +1,19 @@
 use std::{
     cmp::PartialEq,
     iter::{Iterator, Peekable},
+    fmt::Display,
 };
 
 use crate::sym::Strings;
 
 pub fn fatal(msg: &str, pos: Pos) -> ! {
     panic!("{} at {},{}", msg, pos.line, pos.col)
+}
+
+pub fn fatal_tok(msg: &str, tok: Token) -> ! {
+    let Token { kind, pos } = tok;
+
+    panic!("{}, found {} at {},{}", msg, kind, pos.line, pos.col)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,6 +73,66 @@ pub enum TokenKind {
     CharLit(char),
     StringLit(usize),           // String literals are stored into a separate structure.
                                 // We just store an index here.
+}
+
+impl Display for TokenKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let repr = match self {
+            TokenKind::Comma => ",".to_string(),
+            TokenKind::Semi => ";".to_string(),
+            TokenKind::Colon => ":".to_string(),
+            TokenKind::Assign => "=".to_string(),
+            TokenKind::Plus => "+".to_string(),
+            TokenKind::Minus => "-".to_string(),
+            TokenKind::Star => "*".to_string(),
+            TokenKind::Slash => "/".to_string(),
+            TokenKind::Incr => "++".to_string(),
+            TokenKind::Decr => "--".to_string(),
+            TokenKind::Caret => "^".to_string(),
+            TokenKind::Not => "!".to_string(),
+            TokenKind::Mod => "%".to_string(),
+            TokenKind::And => "&&".to_string(),
+            TokenKind::Or => "||".to_string(),
+            TokenKind::Eql => "==".to_string(),
+            TokenKind::Neq => "!=".to_string(),
+            TokenKind::Lss => "<".to_string(),
+            TokenKind::Leq => "<=".to_string(),
+            TokenKind::Gtr => ">".to_string(),
+            TokenKind::Geq => ">=".to_string(),
+
+            TokenKind::LeftBrk => "[".to_string(),
+            TokenKind::RightBrk => "]".to_string(),
+            TokenKind::LeftParen => "(".to_string(),
+            TokenKind::RightParen => ")".to_string(),
+            TokenKind::LeftAngl => "{".to_string(),
+            TokenKind::RightAngl => "}".to_string(),
+
+            // Types
+            TokenKind::Array => "array".to_string(),
+            TokenKind::Bool => "boolean".to_string(),
+            TokenKind::Char => "char".to_string(),
+            TokenKind::Integer => "integer".to_string(),
+            TokenKind::String => "string".to_string(),
+            TokenKind::Void => "void".to_string(),
+
+            // Other Keywords
+            TokenKind::Else => "else".to_string(),
+            TokenKind::For => "for".to_string(),
+            TokenKind::Function => "function".to_string(),
+            TokenKind::If => "if".to_string(),
+            TokenKind::Print => "print".to_string(),
+            TokenKind::Return => "return".to_string(),
+
+            TokenKind::Ident(val) => format!("Ident({val})"),
+            TokenKind::True => "true".to_string(),
+            TokenKind::False => "false".to_string(),
+            TokenKind::IntLit(val) => val.to_string(),
+            TokenKind::CharLit(c) => c.to_string(),
+            TokenKind::StringLit(val) => format!("String({val})"),
+        };
+
+        write!(f, "{}", repr)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,7 +219,15 @@ impl<I> Scanner<I>
         self.last_token = Some(token)
     }
 
-    fn consume_char(&mut self, c: char) -> Char {
+    pub fn consume_token(&mut self) -> Token {
+        self.last_token.take().expect("No token to consume")
+    }
+
+    pub fn discard_token(&mut self) {
+        let _ = self.last_token.take();
+    }
+
+    fn advance_char(&mut self, c: char) -> Char {
         let (col, line) = (self.col, self.line);
 
         if c == '\n' {
@@ -170,7 +245,7 @@ impl<I> Scanner<I>
            Some(c)
         } else {
             self.source.next_if(test)
-                .map(|c| self.consume_char(c))
+                .map(|c| self.advance_char(c))
         }
     }
 
@@ -180,6 +255,15 @@ impl<I> Scanner<I>
 
     fn next_if_eq(&mut self, tc: char) -> Option<Char> {
         self.next_if(|&c| c == tc)
+    }
+
+    pub fn must_be_kind(&mut self, kind: TokenKind) {
+        let Some(tk) = self.scan() else { panic!("Found EOF while expecting token '{kind}'") };
+
+        if tk.kind != kind {
+            let msg = format!("Expected '{kind}'");
+            fatal_tok(&msg, tk)
+        }
     }
 
     pub fn must_be(&mut self, c: char) {
@@ -366,6 +450,16 @@ impl<I> Scanner<I>
         }
     }
 
+    pub fn peek(&mut self) -> Option<Token> {
+        match self.scan() {
+            Some(t) => { 
+                self.put_token(t.clone());
+                Some(t)
+            },
+            None => None,
+        }
+    }
+
     fn keyword(&self, name: &str) -> Option<TokenKind> {
         match name {
             "array" => Some(TokenKind::Array),
@@ -426,6 +520,32 @@ mod tests {
         let t = Token::at(TokenKind::Semi, Pos::at(1, 1));
         scn.put_token(t);
         assert_eq!(scn.scan(), Some(t));
+    }
+
+    #[test]
+    fn test_consume_token() {
+        let mut scn = scanner("");
+        let token = Token { kind: TokenKind::And, pos: Pos::at(0, 0) };
+        scn.put_token(token);
+
+        assert_eq!(scn.consume_token(), token);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_consume_empty_token_panics() {
+        let mut scn = scanner("");
+        scn.consume_token();
+    }
+
+    #[rstest]
+    fn test_discard_token() {
+        let mut scn = scanner("");
+        let token = Token { kind: TokenKind::And, pos: Pos::at(0, 0) };
+        scn.put_token(token);
+
+        scn.discard_token(); // Discard the putback token
+        scn.discard_token(); // No putback token, don't complain anyway
     }
 
     #[rstest]
@@ -601,7 +721,7 @@ mod tests {
 
     #[test]
     fn test_block_comment() {
-        assert_eq!(scanner("/* comment */,").scan(), Some(Token::at(TokenKind::Comma, Pos::at(1, 13))));
+        assert_eq!(scanner("/* comment */\n,").scan(), Some(Token::at(TokenKind::Comma, Pos::at(1, 13))));
     }
 
     #[rstest]
@@ -727,5 +847,77 @@ mod tests {
     #[should_panic(expected = "Expected '||'")]
     fn test_single_pipe_fails() {
         scanner("|").scan();
+    }
+
+    #[rstest]
+    #[case(TokenKind::Comma, false)]
+    #[case(TokenKind::Integer, true)]
+    #[case(TokenKind::Char, true)]
+    #[case(TokenKind::String, true)]
+    #[case(TokenKind::Array, true)]
+    #[case(TokenKind::Void, true)]
+    fn test_is_function_type(#[case] kind: TokenKind, #[case] is_ft: bool) {
+        let tk = Token { kind, pos: Pos::at(0, 0) };
+
+        assert_eq!(tk.is_function_type(), is_ft)
+    }
+
+
+    // Tests added for coverage
+    #[rstest]
+    #[case(TokenKind::Comma, ",")]
+    #[case(TokenKind::Semi , ";")]
+    #[case(TokenKind::Colon , ":")]
+    #[case(TokenKind::Assign , "=")]
+    #[case(TokenKind::Plus , "+")]
+    #[case(TokenKind::Minus , "-")]
+    #[case(TokenKind::Star , "*")]
+    #[case(TokenKind::Slash , "/")]
+    #[case(TokenKind::Incr , "++")]
+    #[case(TokenKind::Decr , "--")]
+    #[case(TokenKind::Caret , "^")]
+    #[case(TokenKind::Not , "!")]
+    #[case(TokenKind::Mod , "%")]
+    #[case(TokenKind::And , "&&")]
+    #[case(TokenKind::Or , "||")]
+    #[case(TokenKind::Eql , "==")]
+    #[case(TokenKind::Neq , "!=")]
+    #[case(TokenKind::Lss , "<")]
+    #[case(TokenKind::Leq , "<=")]
+    #[case(TokenKind::Gtr , ">")]
+    #[case(TokenKind::Geq , ">=")]
+
+    #[case(TokenKind::LeftBrk , "[")]
+    #[case(TokenKind::RightBrk , "]")]
+    #[case(TokenKind::LeftParen , "(")]
+    #[case(TokenKind::RightParen , ")")]
+    #[case(TokenKind::LeftAngl , "{")]
+    #[case(TokenKind::RightAngl , "}")]
+
+    // Types
+    #[case(TokenKind::Array , "array")]
+    #[case(TokenKind::Bool , "boolean")]
+    #[case(TokenKind::Char , "char")]
+    #[case(TokenKind::Integer , "integer")]
+    #[case(TokenKind::String , "string")]
+    #[case(TokenKind::Void , "void")]
+
+    // Other Keywords
+    #[case(TokenKind::Else , "else")]
+    #[case(TokenKind::For , "for")]
+    #[case(TokenKind::Function , "function")]
+    #[case(TokenKind::If , "if")]
+    #[case(TokenKind::Print , "print")]
+    #[case(TokenKind::Return , "return")]
+
+    #[case(TokenKind::True , "true")]
+    #[case(TokenKind::False , "false")]
+    #[case(TokenKind::CharLit('a'), "a")]
+    #[case(TokenKind::CharLit('Z'), "Z")]
+    #[case(TokenKind::IntLit(5), "5")]
+    #[case(TokenKind::IntLit(98452), "98452")]
+    fn test_tokenkind_display(#[case] tk: TokenKind, #[case] expected: &str) {
+        let dsp = format!("{}", tk);
+        assert_eq!(dsp.as_str(), expected)
     }
 }

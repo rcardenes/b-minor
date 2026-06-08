@@ -120,20 +120,20 @@ The book estimates that an undergraduate class should keep busy for a whole seme
 building this compiler, but encourages extending the language and suggests the following
 challenges (which I intend to implement):
 
-* Add a new native type `complex`, along with the needed operators so that one can
+- [ ] Add a new native type `complex`, along with the needed operators so that one can
   do useful things with them (construct numbers, operate, extract real and imaginary
   parts)
-* Add a new automatic type `var`. This should work like C++'s `auto`: the language
+- [ ] Add a new automatic type `var`. This should work like C++'s `auto`: the language
   will infer the type of the variable. Consider extending this to function parameters,
   but note that this needs to be carefully considered as it might have some ramifications
   (e.g., name mangling).
-* Improve the access to arrays by making the array accesses automatically checked at
+- [ ] Improve the access to arrays by making the array accesses automatically checked at
   runtime against the known size of the array.
-* Add a new mutable string type `mutstring` with fixed size but capable of having its
+- [ ] Add a new mutable string type `mutstring` with fixed size but capable of having its
   contents modified, and that can be converted to and from a regular `string` as needed.
-* Add an alternative control flow structure like `switch`. For an extra challenge, allow
+- [ ] Add an alternative control flow structure like `switch`. For an extra challenge, allow
   `switch` to select value ranges, not just constants.
-* Implement structure types.
+- [ ] Implement structure types.
 
 ## Grammar
 
