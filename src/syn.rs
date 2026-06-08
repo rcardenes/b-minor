@@ -179,7 +179,7 @@ impl<I> Parser<I>
         Parser { scanner }
     }
 
-    fn scan_block(&mut self) -> AstNode {
+    fn parse_block(&mut self) -> AstNode {
         let mut statements = vec![];
 
         self.scanner.must_be_kind(TokenKind::LeftAngl);
@@ -187,7 +187,7 @@ impl<I> Parser<I>
         loop {
             match self.scanner.peek() {
                 Some(Token { kind: TokenKind::LeftAngl, .. }) => {
-                    statements.push(self.scan_block());
+                    statements.push(self.parse_block());
                 },
                 Some(Token { kind: TokenKind::RightAngl, .. }) => {
                     self.scanner.discard_token();
@@ -209,7 +209,7 @@ impl<I> Parser<I>
         AstNode::Block(statements)
     }
 
-    fn scan_return_type(&mut self) -> Type {
+    fn parse_return_type(&mut self) -> Type {
         match self.scanner.scan() {
             Some(Token { kind: TokenKind::Integer, .. }) => Type::Scalar(PrimType::Int),
             Some(Token { kind: TokenKind::Char, .. }) => Type::Scalar(PrimType::Char),
@@ -221,8 +221,8 @@ impl<I> Parser<I>
         }
     }
 
-    fn scan_function_signature(&mut self) -> Type {
-        let ret_type = self.scan_return_type();
+    fn parse_function_signature(&mut self) -> Type {
+        let ret_type = self.parse_return_type();
         let mut params = vec![];
         self.scanner.must_be_kind(TokenKind::LeftParen);
         if let Some(Token { kind: TokenKind::RightParen, .. }) = self.scanner.peek() {
@@ -242,7 +242,7 @@ impl<I> Parser<I>
         Type::make_signature(ret_type, params)
     }
 
-    fn scan_var_decl_type(&mut self) -> Type {
+    fn parse_var_decl_type(&mut self) -> Type {
         match self.scanner.scan() {
             Some(Token { kind: TokenKind::Array, .. }) => {
                 self.scanner.must_be_kind(TokenKind::LeftBrk);
@@ -253,7 +253,7 @@ impl<I> Parser<I>
                 };
                 self.scanner.must_be_kind(TokenKind::RightBrk);
 
-                let inner = self.scan_var_decl_type();
+                let inner = self.parse_var_decl_type();
                 Type::make_array(size, inner)
             },
             Some(Token { kind: TokenKind::Integer, .. }) => Type::Scalar(PrimType::Int),
@@ -370,17 +370,17 @@ impl<I> Parser<I>
         let peek = self.scanner.peek();
         Some(match self.scanner.scan() {
             Some(Token { kind: TokenKind::Function, .. }) => {
-                let signature = self.scan_function_signature();
+                let signature = self.parse_function_signature();
                 match self.scanner.scan() {
                     Some(Token { kind: TokenKind::Semi, .. }) => AstNode::ForwardFunction { id: ident, signature },
-                    Some(Token { kind: TokenKind::Assign, .. }) => self.scan_block(),
+                    Some(Token { kind: TokenKind::Assign, .. }) => self.parse_block(),
                     Some(t) => fatal_tok("Expected ';' or '='", t),
                     None => panic!("Found EOF when parsing a function"),
                 }
             },
             Some(t) if t.is_type() => {
                 self.scanner.put_token(t);
-                let dtype = self.scan_var_decl_type();
+                let dtype = self.parse_var_decl_type();
                 let init = if let Some(Token { kind: TokenKind::Assign, .. }) = self.scanner.peek() {
                     self.scanner.discard_token();
                     match dtype {
@@ -885,60 +885,60 @@ mod tests {
         parser("1--").parse_expression(0);
     }
 
-    // ---- scan_var_decl_type ----
+    // ---- parse_var_decl_type ----
 
     #[test]
-    fn scan_var_decl_type_int() {
+    fn parse_var_decl_type_int() {
         let mut p = parser("integer");
-        assert_eq!(p.scan_var_decl_type(), Type::Scalar(PrimType::Int));
+        assert_eq!(p.parse_var_decl_type(), Type::Scalar(PrimType::Int));
     }
 
     #[test]
-    fn scan_var_decl_type_char() {
+    fn parse_var_decl_type_char() {
         let mut p = parser("char");
-        assert_eq!(p.scan_var_decl_type(), Type::Scalar(PrimType::Char));
+        assert_eq!(p.parse_var_decl_type(), Type::Scalar(PrimType::Char));
     }
 
     #[test]
-    fn scan_var_decl_type_bool() {
+    fn parse_var_decl_type_bool() {
         let mut p = parser("boolean");
-        assert_eq!(p.scan_var_decl_type(), Type::Scalar(PrimType::Bool));
+        assert_eq!(p.parse_var_decl_type(), Type::Scalar(PrimType::Bool));
     }
 
     #[test]
-    fn scan_var_decl_type_string() {
+    fn parse_var_decl_type_string() {
         let mut p = parser("string");
-        assert_eq!(p.scan_var_decl_type(), Type::Scalar(PrimType::String));
+        assert_eq!(p.parse_var_decl_type(), Type::Scalar(PrimType::String));
     }
 
     #[test]
-    fn scan_var_decl_type_array() {
+    fn parse_var_decl_type_array() {
         let mut p = parser("array [5] integer");
         assert_eq!(
-            p.scan_var_decl_type(),
+            p.parse_var_decl_type(),
             Type::make_array(5, Type::Scalar(PrimType::Int))
         );
     }
 
     #[test]
-    fn scan_var_decl_type_nested_array() {
+    fn parse_var_decl_type_nested_array() {
         let mut p = parser("array [3] array [3] char");
         assert_eq!(
-            p.scan_var_decl_type(),
+            p.parse_var_decl_type(),
             Type::make_array(3, Type::make_array(3, Type::Scalar(PrimType::Char)))
         );
     }
 
     #[test]
     #[should_panic(expected = "Expected a type declaration")]
-    fn scan_var_decl_type_invalid() {
-        parser("foo").scan_var_decl_type();
+    fn parse_var_decl_type_invalid() {
+        parser("foo").parse_var_decl_type();
     }
 
     #[test]
     #[should_panic(expected = "Found EOF while expecting a type declaration")]
-    fn scan_var_decl_type_eof() {
-        parser("").scan_var_decl_type();
+    fn parse_var_decl_type_eof() {
+        parser("").parse_var_decl_type();
     }
 
     // ---- declaration ----
@@ -1142,10 +1142,10 @@ mod tests {
         parse_decl("x: array [] integer = [42];");
     }
 
-    // ---- scan_return_type ----
+    // ---- parse_return_type ----
 
     fn parse_return_type(s: &str) -> Type {
-        parser(s).scan_return_type()
+        parser(s).parse_return_type()
     }
 
     #[test]
@@ -1176,19 +1176,19 @@ mod tests {
     #[test]
     #[should_panic(expected = "Expected a return type declaration")]
     fn return_type_invalid() {
-        parser("foo").scan_return_type();
+        parser("foo").parse_return_type();
     }
 
     #[test]
     #[should_panic(expected = "Found EOF while expecting a type declaration")]
     fn return_type_eof() {
-        parser("").scan_return_type();
+        parser("").parse_return_type();
     }
 
-    // ---- scan_function_signature ----
+    // ---- parse_function_signature ----
 
     fn parse_func_sig(s: &str) -> Type {
-        parser(s).scan_function_signature()
+        parser(s).parse_function_signature()
     }
 
     #[test]
@@ -1252,19 +1252,19 @@ mod tests {
     #[test]
     #[should_panic(expected = "Found EOF expecting an expression")]
     fn func_sig_missing_paren() {
-        parser("integer(").scan_function_signature();
+        parser("integer(").parse_function_signature();
     }
 
     #[test]
     #[should_panic(expected = "Expected ',' or ')'")]
     fn func_sig_bad_separator() {
-        parser("integer(x y)").scan_function_signature();
+        parser("integer(x y)").parse_function_signature();
     }
 
-    // ---- scan_block ----
+    // ---- parse_block ----
 
     fn parse_block(s: &str) -> AstNode {
-        parser(s).scan_block()
+        parser(s).parse_block()
     }
 
     #[test]
