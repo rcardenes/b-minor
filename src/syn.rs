@@ -133,6 +133,15 @@ impl AstNode {
         AstNode::VarDecl { id, dtype, init }
     }
 
+    fn make_assignment(lvalue: usize, expr: AstNode) -> AstNode {
+        let expr = Box::new(expr);
+        AstNode::Assignment { lvalue, expr }
+    }
+
+    fn make_return(expr: AstNode) -> AstNode {
+        AstNode::Return(Box::new(expr))
+    }
+
     fn make_literal(tok: Token) -> AstNode {
         match tok.kind {
             TokenKind::IntLit(val) => AstNode::IntLit(val),
@@ -179,31 +188,60 @@ impl<I> Parser<I>
         Parser { scanner }
     }
 
+    fn parse_if(&mut self) -> AstNode {
+        todo!()
+    }
+
+    fn parse_for(&mut self) -> AstNode {
+        todo!()
+    }
+
+    fn parse_print(&mut self) -> AstNode {
+        todo!()
+    }
+
+    fn parse_return(&mut self) -> AstNode {
+        todo!()
+    }
+
     fn parse_block(&mut self) -> AstNode {
         let mut statements = vec![];
 
         self.scanner.must_be_kind(TokenKind::LeftAngl);
 
         loop {
-            match self.scanner.peek() {
+            let peek = self.scanner.peek();
+            if matches!(peek, Some(Token { kind: TokenKind::RightAngl, .. })) {
+                self.scanner.discard_token();
+                break;
+            }
+            let statement = match peek {
                 Some(Token { kind: TokenKind::LeftAngl, .. }) => {
-                    statements.push(self.parse_block());
-                },
-                Some(Token { kind: TokenKind::RightAngl, .. }) => {
-                    self.scanner.discard_token();
-                    break;
+                    self.parse_block()
                 },
                 Some(Token { kind: TokenKind::Ident(id), .. }) => {
-                    // Declaration or assignment
-                    todo!()
+                    self.scanner.discard_token();
+                    match self.scanner.scan() {
+                        Some(Token { kind: TokenKind::Assign, .. }) => {
+                            let expr = self.parse_expression(0);
+                            self.scanner.must_be_kind(TokenKind::Semi);
+                            AstNode::make_assignment(id, expr)
+                        },
+                        Some(Token { kind: TokenKind::Colon, .. }) => {
+                            self.parse_var_decl(id)
+                        },
+                        Some(t) => fatal_tok("Expected '=' or ':'", t),
+                        None => panic!("Found EOF when expecting '=' or ':'"),
+                    }
                 },
-                Some(Token { kind: TokenKind::If, .. }) => todo!(),
-                Some(Token { kind: TokenKind::For, .. }) => todo!(),
-                Some(Token { kind: TokenKind::Print, .. }) => todo!(),
-                Some(Token { kind: TokenKind::Return, .. }) => todo!(),
+                Some(Token { kind: TokenKind::If, .. }) => self.parse_if(),
+                Some(Token { kind: TokenKind::For, .. }) => self.parse_for(),
+                Some(Token { kind: TokenKind::Print, .. }) => self.parse_print(),
+                Some(Token { kind: TokenKind::Return, .. }) => self.parse_return(),
                 Some(t) => fatal_tok("Expected statement or declaration", t),
                 None => panic!("Found EOF expecting a statement"),
-            }
+            };
+            statements.push(statement);
         }
 
         AstNode::Block(statements)
@@ -358,6 +396,39 @@ impl<I> Parser<I>
         left_node
     }
 
+    fn parse_var_decl(&mut self, ident: usize) -> AstNode {
+        let dtype = self.parse_var_decl_type();
+        let init = if let Some(Token { kind: TokenKind::Assign, .. }) = self.scanner.peek() {
+            self.scanner.discard_token();
+            match dtype {
+                Type::Array { .. } => {
+                    let mut args = vec![];
+                    self.scanner.must_be_kind(TokenKind::LeftBrk);
+                    loop {
+                        args.push(self.parse_expression(0));
+                        match self.scanner.scan() {
+                            Some(Token { kind: TokenKind::Comma, .. }) => {},
+                            Some(Token { kind: TokenKind::RightBrk, .. }) => break,
+                            Some(t) => fatal_tok("Expected ',' or ']'", t),
+                            None => panic!("EOF found parsing array initialization"),
+                        }
+                    }
+                    Some(AstNode::ArrayInitializer(args))
+                },
+                _ => {
+                    let Some(next) = self.scanner.scan() else {
+                        panic!("Found EOF while waiting for a literal")
+                    };
+                    Some(AstNode::make_literal(next))
+                }
+            }
+        } else {
+            None
+        };
+        self.scanner.must_be_kind(TokenKind::Semi); // ;
+        AstNode::make_var_decl(ident, dtype, init)
+    }
+
     fn declaration(&mut self) -> Option<AstNode> {
         let ident = match self.scanner.scan() {
             Some(Token { kind: TokenKind::Ident(id), .. }) => id,
@@ -367,7 +438,6 @@ impl<I> Parser<I>
 
         self.scanner.must_be_kind(TokenKind::Colon);
 
-        let peek = self.scanner.peek();
         Some(match self.scanner.scan() {
             Some(Token { kind: TokenKind::Function, .. }) => {
                 let signature = self.parse_function_signature();
@@ -380,36 +450,7 @@ impl<I> Parser<I>
             },
             Some(t) if t.is_type() => {
                 self.scanner.put_token(t);
-                let dtype = self.parse_var_decl_type();
-                let init = if let Some(Token { kind: TokenKind::Assign, .. }) = self.scanner.peek() {
-                    self.scanner.discard_token();
-                    match dtype {
-                        Type::Array { .. } => {
-                            let mut args = vec![];
-                            self.scanner.must_be_kind(TokenKind::LeftBrk);
-                            loop {
-                                args.push(self.parse_expression(0));
-                                match self.scanner.scan() {
-                                    Some(Token { kind: TokenKind::Comma, .. }) => {},
-                                    Some(Token { kind: TokenKind::RightBrk, .. }) => break,
-                                    Some(t) => fatal_tok("Expected ',' or ']'", t),
-                                    None => panic!("EOF found parsing array initialization"),
-                                }
-                            }
-                            Some(AstNode::ArrayInitializer(args))
-                        },
-                        _ => {
-                            let Some(next) = self.scanner.scan() else {
-                                panic!("Found EOF while waiting for a literal")
-                            };
-                            Some(AstNode::make_literal(next))
-                        }
-                    }
-                } else {
-                    None
-                };
-                self.scanner.must_be_kind(TokenKind::Semi); // ;
-                AstNode::make_var_decl(ident, dtype, init)
+                self.parse_var_decl(ident)
             },
             Some(Token { pos, .. }) => fatal("Expected 'function' or a type", pos),
             None => panic!("Found EOF parsing a declaration"),
@@ -1292,6 +1333,365 @@ mod tests {
         parse_block("{");
     }
 
+    // ---- Block with variable declarations ----
+
+    #[test]
+    fn block_var_decl_no_init() {
+        assert_eq!(
+            parse_block("{x: integer;}"),
+            AstNode::Block(vec![
+                AstNode::VarDecl {
+                    id: 0,
+                    dtype: Type::Scalar(PrimType::Int),
+                    init: None,
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn block_var_decl_int_init() {
+        assert_eq!(
+            parse_block("{x: integer = 42;}"),
+            AstNode::Block(vec![
+                AstNode::VarDecl {
+                    id: 0,
+                    dtype: Type::Scalar(PrimType::Int),
+                    init: Some(Box::new(AstNode::IntLit(42))),
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn block_var_decl_bool_init() {
+        assert_eq!(
+            parse_block("{x: boolean = true;}"),
+            AstNode::Block(vec![
+                AstNode::VarDecl {
+                    id: 0,
+                    dtype: Type::Scalar(PrimType::Bool),
+                    init: Some(Box::new(AstNode::BoolVal(true))),
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn block_var_decl_char_init() {
+        assert_eq!(
+            parse_block("{x: char = 'a';}"),
+            AstNode::Block(vec![
+                AstNode::VarDecl {
+                    id: 0,
+                    dtype: Type::Scalar(PrimType::Char),
+                    init: Some(Box::new(AstNode::CharLit('a'))),
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn block_var_decl_string_init() {
+        let result = parse_block("{x: string = \"hello\";}");
+        match result {
+            AstNode::Block(stmts) if stmts.len() == 1 => {
+                match &stmts[0] {
+                    AstNode::VarDecl { id: 0, dtype: Type::Scalar(PrimType::String), init: Some(v) }
+                        if matches!(**v, AstNode::StringLit(_)) => {},
+                    _ => panic!("expected VarDecl with StringLit"),
+                }
+            }
+            _ => panic!("expected Block with one VarDecl"),
+        }
+    }
+
+    #[test]
+    fn block_var_decl_array() {
+        assert_eq!(
+            parse_block("{x: array [3] integer = [1, 2, 3];}"),
+            AstNode::Block(vec![
+                AstNode::VarDecl {
+                    id: 0,
+                    dtype: Type::make_array(3, Type::Scalar(PrimType::Int)),
+                    init: Some(Box::new(AstNode::ArrayInitializer(vec![
+                        AstNode::IntLit(1),
+                        AstNode::IntLit(2),
+                        AstNode::IntLit(3),
+                    ]))),
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn block_var_decl_nested_array() {
+        assert_eq!(
+            parse_block("{x: array [2] array [3] char = ['a', 'b'];	}"),
+            AstNode::Block(vec![
+                AstNode::VarDecl {
+                    id: 0,
+                    dtype: Type::make_array(2, Type::make_array(3, Type::Scalar(PrimType::Char))),
+                    init: Some(Box::new(AstNode::ArrayInitializer(vec![
+                        AstNode::CharLit('a'),
+                        AstNode::CharLit('b'),
+                    ]))),
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn block_multiple_var_decls() {
+        assert_eq!(
+            parse_block("{a: integer = 1; b: boolean = false;}"),
+            AstNode::Block(vec![
+                AstNode::VarDecl {
+                    id: 0,
+                    dtype: Type::Scalar(PrimType::Int),
+                    init: Some(Box::new(AstNode::IntLit(1))),
+                },
+                AstNode::VarDecl {
+                    id: 1,
+                    dtype: Type::Scalar(PrimType::Bool),
+                    init: Some(Box::new(AstNode::BoolVal(false))),
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn block_nested_with_decl() {
+        assert_eq!(
+            parse_block("{{x: integer = 5;}}"),
+            AstNode::Block(vec![
+                AstNode::Block(vec![
+                    AstNode::VarDecl {
+                        id: 0,
+                        dtype: Type::Scalar(PrimType::Int),
+                        init: Some(Box::new(AstNode::IntLit(5))),
+                    }
+                ])
+            ])
+        );
+    }
+
+    // ---- Block with assignment statements ----
+
+    #[test]
+    fn block_assign_int() {
+        assert_eq!(
+            parse_block("{x = 42;}"),
+            AstNode::Block(vec![
+                AstNode::Assignment {
+                    lvalue: 0,
+                    expr: Box::new(AstNode::IntLit(42)),
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn block_assign_expr() {
+        assert_eq!(
+            parse_block("{x = 1 + 2;}"),
+            AstNode::Block(vec![
+                AstNode::Assignment {
+                    lvalue: 0,
+                    expr: Box::new(AstNode::Add {
+                        left: Box::new(AstNode::IntLit(1)),
+                        right: Box::new(AstNode::IntLit(2)),
+                    }),
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn block_assign_bool() {
+        assert_eq!(
+            parse_block("{x = true;}"),
+            AstNode::Block(vec![
+                AstNode::Assignment {
+                    lvalue: 0,
+                    expr: Box::new(AstNode::BoolVal(true)),
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn block_assign_char() {
+        assert_eq!(
+            parse_block("{x = 'a';}"),
+            AstNode::Block(vec![
+                AstNode::Assignment {
+                    lvalue: 0,
+                    expr: Box::new(AstNode::CharLit('a')),
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn block_assign_string() {
+        let result = parse_block("{x = \"hello\";}");
+        match result {
+            AstNode::Block(stmts) if stmts.len() == 1 => {
+                match &stmts[0] {
+                    AstNode::Assignment { lvalue: 0, expr } if matches!(**expr, AstNode::StringLit(_)) => {},
+                    _ => panic!("expected Assignment with StringLit"),
+                }
+            }
+            _ => panic!("expected Block with one Assignment"),
+        }
+    }
+
+    #[test]
+    fn block_assign_unary_minus() {
+        assert_eq!(
+            parse_block("{x = -5;}"),
+            AstNode::Block(vec![
+                AstNode::Assignment {
+                    lvalue: 0,
+                    expr: Box::new(AstNode::Minus(Box::new(AstNode::IntLit(5)))),
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn block_assign_not() {
+        assert_eq!(
+            parse_block("{x = !true;}"),
+            AstNode::Block(vec![
+                AstNode::Assignment {
+                    lvalue: 0,
+                    expr: Box::new(AstNode::Not(Box::new(AstNode::BoolVal(true)))),
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn block_assign_func_call() {
+        let result = parse_block("{x = foo(42);}");
+        match result {
+            AstNode::Block(stmts) if stmts.len() == 1 => {
+                match &stmts[0] {
+                    AstNode::Assignment { lvalue: 0, expr } => {
+                        assert!(matches!(**expr, AstNode::FuncCall { .. }));
+                    }
+                    _ => panic!("expected Assignment with FuncCall"),
+                }
+            }
+            _ => panic!("expected Block with one Assignment"),
+        }
+    }
+
+    #[test]
+    fn block_assign_subscript() {
+        let result = parse_block("{x = arr[0];}");
+        match result {
+            AstNode::Block(stmts) if stmts.len() == 1 => {
+                match &stmts[0] {
+                    AstNode::Assignment { lvalue: 0, expr } => {
+                        assert!(matches!(**expr, AstNode::Subscript { .. }));
+                    }
+                    _ => panic!("expected Assignment with Subscript"),
+                }
+            }
+            _ => panic!("expected Block with one Assignment"),
+        }
+    }
+
+    #[test]
+    fn block_assign_grouped() {
+        assert_eq!(
+            parse_block("{x = (42);}"),
+            AstNode::Block(vec![
+                AstNode::Assignment {
+                    lvalue: 0,
+                    expr: Box::new(AstNode::IntLit(42)),
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn block_assign_multiple() {
+        assert_eq!(
+            parse_block("{x = 1; y = 2;}"),
+            AstNode::Block(vec![
+                AstNode::Assignment {
+                    lvalue: 0,
+                    expr: Box::new(AstNode::IntLit(1)),
+                },
+                AstNode::Assignment {
+                    lvalue: 1,
+                    expr: Box::new(AstNode::IntLit(2)),
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn block_mixed_assign_and_decl() {
+        assert_eq!(
+            parse_block("{x: integer = 1; y = x;}"),
+            AstNode::Block(vec![
+                AstNode::VarDecl {
+                    id: 0,
+                    dtype: Type::Scalar(PrimType::Int),
+                    init: Some(Box::new(AstNode::IntLit(1))),
+                },
+                AstNode::Assignment {
+                    lvalue: 1,
+                    expr: Box::new(AstNode::Ident(0)),
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn block_nested_assign() {
+        assert_eq!(
+            parse_block("{{x = 42;}}"),
+            AstNode::Block(vec![
+                AstNode::Block(vec![
+                    AstNode::Assignment {
+                        lvalue: 0,
+                        expr: Box::new(AstNode::IntLit(42)),
+                    }
+                ])
+            ])
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected ';'")]
+    fn block_assign_missing_semi() {
+        parse_block("{x = 42}");
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected to find")]
+    fn block_assign_missing_expr() {
+        parse_block("{x = ;}");
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected '=' or ':'")]
+    fn block_assign_invalid_token() {
+        parse_block("{x + 42;}");
+    }
+
+    #[test]
+    #[should_panic(expected = "Found EOF while expecting token ';'")]
+    fn block_assign_eof_after_expr() {
+        parse_block("{x = 42");
+    }
+
     // ---- function declarations ----
 
     #[test]
@@ -1327,6 +1727,34 @@ mod tests {
         assert_eq!(
             parse_decl("foo: function integer() = {}"),
             AstNode::Block(vec![])
+        );
+    }
+
+    #[test]
+    fn func_def_non_empty_body() {
+        assert_eq!(
+            parse_decl("foo: function integer() = {x: integer = 42;}"),
+            AstNode::Block(vec![
+                AstNode::VarDecl {
+                    id: 1,
+                    dtype: Type::Scalar(PrimType::Int),
+                    init: Some(Box::new(AstNode::IntLit(42))),
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn func_def_void_body() {
+        assert_eq!(
+            parse_decl("main: function void() = {x: char = 'a';}"),
+            AstNode::Block(vec![
+                AstNode::VarDecl {
+                    id: 1,
+                    dtype: Type::Scalar(PrimType::Char),
+                    init: Some(Box::new(AstNode::CharLit('a'))),
+                }
+            ])
         );
     }
 
@@ -1377,5 +1805,37 @@ mod tests {
                 },
             ]
         );
+    }
+
+    // ---- parse_top with function definitions ----
+
+    #[test]
+    fn parse_top_func_def_empty() {
+        assert_eq!(
+            parser("foo: function integer() = {}").parse_top(),
+            vec![AstNode::Block(vec![])]
+        );
+    }
+
+    #[test]
+    fn parse_top_func_def_with_body() {
+        assert_eq!(
+            parser("foo: function integer() = {x: integer = 42;}").parse_top(),
+            vec![AstNode::Block(vec![
+                AstNode::VarDecl {
+                    id: 1,
+                    dtype: Type::Scalar(PrimType::Int),
+                    init: Some(Box::new(AstNode::IntLit(42))),
+                }
+            ])]
+        );
+    }
+
+    #[test]
+    fn parse_top_mixed_forward_and_def() {
+        let result = parser("foo: function integer(); bar: function void() = {}").parse_top();
+        assert_eq!(result.len(), 2);
+        assert!(matches!(result[0], AstNode::ForwardFunction { id: 0, .. }));
+        assert_eq!(result[1], AstNode::Block(vec![]));
     }
 }
