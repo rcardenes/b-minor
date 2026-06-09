@@ -45,12 +45,13 @@ pub enum AstNode {
 
     // The 'id' field in the following is an index to a string table
     VarDecl { id: usize, dtype: Type, init: Option<Box<AstNode>> },
-    Function { id: usize, signature: Type },
+    Function { id: usize, signature: Type, body: Box<AstNode> },
     ForwardFunction { id: usize, signature: Type },
 
     // Statements
+    EmptyBlock,
     Block(Vec<AstNode>),
-    If { cond: Box<AstNode>, true_branch: Box<AstNode>, f_branch: Box<AstNode> },
+    If { cond: Box<AstNode>, t_branch: Box<AstNode>, f_branch: Box<AstNode> },
     For { assign: Vec<AstNode>, cond: Box<AstNode>, post_op: Vec<AstNode>, body: Box<AstNode> },
     Print(Vec<AstNode>),
     Return(Box<AstNode>),
@@ -80,6 +81,17 @@ pub enum AstNode {
 }
 
 impl AstNode {
+    fn make_literal(tok: Token) -> AstNode {
+        match tok.kind {
+            TokenKind::IntLit(val) => AstNode::IntLit(val),
+            TokenKind::CharLit(val) => AstNode::CharLit(val),
+            TokenKind::StringLit(index) => AstNode::StringLit(index),
+            TokenKind::True => AstNode::BoolVal(true),
+            TokenKind::False => AstNode::BoolVal(false),
+            _ => fatal_tok("Expected a literal", tok),
+        }
+    }
+
     fn make_minus(node: AstNode) -> AstNode {
         AstNode::Minus(Box::new(node))
     }
@@ -133,6 +145,11 @@ impl AstNode {
         AstNode::VarDecl { id, dtype, init }
     }
 
+    fn make_function(id: usize, signature: Type, body: AstNode) -> AstNode {
+        let body = Box::new(body);
+        AstNode::Function { id, signature, body }
+    }
+
     fn make_assignment(lvalue: usize, expr: AstNode) -> AstNode {
         let expr = Box::new(expr);
         AstNode::Assignment { lvalue, expr }
@@ -142,15 +159,11 @@ impl AstNode {
         AstNode::Return(Box::new(expr))
     }
 
-    fn make_literal(tok: Token) -> AstNode {
-        match tok.kind {
-            TokenKind::IntLit(val) => AstNode::IntLit(val),
-            TokenKind::CharLit(val) => AstNode::CharLit(val),
-            TokenKind::StringLit(index) => AstNode::StringLit(index),
-            TokenKind::True => AstNode::BoolVal(true),
-            TokenKind::False => AstNode::BoolVal(false),
-            _ => fatal_tok("Expected a literal", tok),
-        }
+    fn make_if(cond: AstNode, true_branch: AstNode, false_branch: AstNode) -> AstNode {
+        let cond = Box::new(cond);
+        let t_branch = Box::new(true_branch);
+        let f_branch = Box::new(false_branch);
+        AstNode::If { cond, t_branch, f_branch }
     }
 }
 
@@ -189,10 +202,28 @@ impl<I> Parser<I>
     }
 
     fn parse_if(&mut self) -> AstNode {
-        todo!()
+        self.scanner.must_be_kind(TokenKind::If);
+        self.scanner.must_be_kind(TokenKind::LeftParen);
+        let cond = self.parse_expression(0);
+        self.scanner.must_be_kind(TokenKind::RightParen);
+        let true_body = self.parse_block();
+        let false_body = if let Some(Token { kind: TokenKind::Else, .. }) = self.scanner.peek() {
+            self.scanner.discard_token();
+            self.parse_block()
+        } else {
+            AstNode::EmptyBlock
+        };
+
+        AstNode::make_if(cond, true_body, false_body)
     }
 
     fn parse_for(&mut self) -> AstNode {
+        // self.scanner.must_be_kind(TokenKind::For);
+        // self.scanner.must_be_kind(TokenKind::LeftParen);
+        // self.scanner.must_be_kind(TokenKind::Semi);
+        // self.scanner.must_be_kind(TokenKind::Semi);
+        // self.scanner.must_be_kind(TokenKind::RightParen);
+        // let body = self.parse_block();
         todo!()
     }
 
@@ -244,7 +275,11 @@ impl<I> Parser<I>
             statements.push(statement);
         }
 
-        AstNode::Block(statements)
+        if statements.is_empty() {
+            AstNode::EmptyBlock
+        } else {
+            AstNode::Block(statements)
+        }
     }
 
     fn parse_return_type(&mut self) -> Type {
@@ -365,7 +400,7 @@ impl<I> Parser<I>
                     self.scanner.must_be_kind(TokenKind::RightBrk);
                     match left_node {
                         AstNode::Ident(id) => AstNode::make_subscript(id, index),
-                        _ => fatal("Expected identifier before susbscript", next_tk.pos)
+                        _ => fatal("Expected identifier before subscript", next_tk.pos)
                     }
                 },
                 TokenKind::LeftParen => {
@@ -443,7 +478,9 @@ impl<I> Parser<I>
                 let signature = self.parse_function_signature();
                 match self.scanner.scan() {
                     Some(Token { kind: TokenKind::Semi, .. }) => AstNode::ForwardFunction { id: ident, signature },
-                    Some(Token { kind: TokenKind::Assign, .. }) => self.parse_block(),
+                    Some(Token { kind: TokenKind::Assign, .. }) => {
+                        AstNode::make_function(ident, signature, self.parse_block())
+                    },
                     Some(t) => fatal_tok("Expected ';' or '='", t),
                     None => panic!("Found EOF when parsing a function"),
                 }
@@ -891,7 +928,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Expected identifier before susbscript")]
+    #[should_panic(expected = "Expected identifier before subscript")]
     fn subscript_on_non_ident() {
         parser("42[0]").parse_expression(0);
     }
@@ -1310,14 +1347,14 @@ mod tests {
 
     #[test]
     fn block_empty() {
-        assert_eq!(parse_block("{}"), AstNode::Block(vec![]));
+        assert_eq!(parse_block("{}"), AstNode::EmptyBlock);
     }
 
     #[test]
     fn block_nested_empty() {
         assert_eq!(
             parse_block("{{}}"),
-            AstNode::Block(vec![AstNode::Block(vec![])])
+            AstNode::Block(vec![AstNode::EmptyBlock])
         );
     }
 
@@ -1692,6 +1729,135 @@ mod tests {
         parse_block("{x = 42");
     }
 
+    // ---- if statements ----
+
+    #[test]
+    fn if_only() {
+        assert_eq!(
+            parse_block("{if (true) { x = 1; }}"),
+            AstNode::Block(vec![
+                AstNode::If {
+                    cond: Box::new(AstNode::BoolVal(true)),
+                    t_branch: Box::new(AstNode::Block(vec![
+                        AstNode::Assignment {
+                            lvalue: 0,
+                            expr: Box::new(AstNode::IntLit(1)),
+                        }
+                    ])),
+                    f_branch: Box::new(AstNode::EmptyBlock),
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn if_else() {
+        assert_eq!(
+            parse_block("{if (true) { x = 1; } else { y = 2; }}"),
+            AstNode::Block(vec![
+                AstNode::If {
+                    cond: Box::new(AstNode::BoolVal(true)),
+                    t_branch: Box::new(AstNode::Block(vec![
+                        AstNode::Assignment {
+                            lvalue: 0,
+                            expr: Box::new(AstNode::IntLit(1)),
+                        }
+                    ])),
+                    f_branch: Box::new(AstNode::Block(vec![
+                        AstNode::Assignment {
+                            lvalue: 1,
+                            expr: Box::new(AstNode::IntLit(2)),
+                        }
+                    ])),
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn if_with_complex_cond() {
+        assert_eq!(
+            parse_block("{if (1 + 2) { x = 1; }}"),
+            AstNode::Block(vec![
+                AstNode::If {
+                    cond: Box::new(AstNode::Add {
+                        left: Box::new(AstNode::IntLit(1)),
+                        right: Box::new(AstNode::IntLit(2)),
+                    }),
+                    t_branch: Box::new(AstNode::Block(vec![
+                        AstNode::Assignment {
+                            lvalue: 0,
+                            expr: Box::new(AstNode::IntLit(1)),
+                        }
+                    ])),
+                    f_branch: Box::new(AstNode::EmptyBlock),
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn if_with_var_decl_in_body() {
+        assert_eq!(
+            parse_block("{if (a) { x: integer = 42; }}"),
+            AstNode::Block(vec![
+                AstNode::If {
+                    cond: Box::new(AstNode::Ident(0)),
+                    t_branch: Box::new(AstNode::Block(vec![
+                        AstNode::VarDecl {
+                            id: 1,
+                            dtype: Type::Scalar(PrimType::Int),
+                            init: Some(Box::new(AstNode::IntLit(42))),
+                        }
+                    ])),
+                    f_branch: Box::new(AstNode::EmptyBlock),
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn if_else_if() {
+        assert_eq!(
+            parse_block("{if (a) { x = 1; } else { if (b) { y = 2; } }}"),
+            AstNode::Block(vec![
+                AstNode::If {
+                    cond: Box::new(AstNode::Ident(0)),
+                    t_branch: Box::new(AstNode::Block(vec![
+                        AstNode::Assignment {
+                            lvalue: 1,
+                            expr: Box::new(AstNode::IntLit(1)),
+                        }
+                    ])),
+                    f_branch: Box::new(AstNode::Block(vec![
+                        AstNode::If {
+                            cond: Box::new(AstNode::Ident(2)),
+                            t_branch: Box::new(AstNode::Block(vec![
+                                AstNode::Assignment {
+                                    lvalue: 3,
+                                    expr: Box::new(AstNode::IntLit(2)),
+                                }
+                            ])),
+                            f_branch: Box::new(AstNode::EmptyBlock),
+                        }
+                    ])),
+                }
+            ])
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected '('")]
+    fn if_missing_lparen() {
+        parse_block("{if true { x = 1; }}");
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected ')'")]
+    fn if_missing_rparen() {
+        parse_block("{if (true { x = 1; }}");
+    }
+
     // ---- function declarations ----
 
     #[test]
@@ -1724,37 +1890,49 @@ mod tests {
 
     #[test]
     fn func_def_empty_body() {
+        let body = Box::new(AstNode::EmptyBlock);
+        let signature = Type::Function { dtype: Box::new(Type::Scalar(PrimType::Int)),
+                                               params: vec![] };
         assert_eq!(
             parse_decl("foo: function integer() = {}"),
-            AstNode::Block(vec![])
+            AstNode::Function { id: 0, body, signature }
         );
     }
 
     #[test]
     fn func_def_non_empty_body() {
-        assert_eq!(
-            parse_decl("foo: function integer() = {x: integer = 42;}"),
+        let body = Box::new(
             AstNode::Block(vec![
                 AstNode::VarDecl {
                     id: 1,
                     dtype: Type::Scalar(PrimType::Int),
                     init: Some(Box::new(AstNode::IntLit(42))),
                 }
-            ])
+            ]));
+        let signature = Type::Function { dtype: Box::new(Type::Scalar(PrimType::Int)),
+                                               params: vec![] };
+        assert_eq!(
+            parse_decl("foo: function integer() = {x: integer = 42;}"),
+            AstNode::Function { id: 0, signature, body }
         );
     }
 
     #[test]
     fn func_def_void_body() {
+        let body = Box::new(AstNode::Block(vec![
+            AstNode::VarDecl {
+                id: 1,
+                dtype: Type::Scalar(PrimType::Char),
+                init: Some(Box::new(AstNode::CharLit('a'))),
+            }
+        ]));
+        let signature = Type::Function {
+            dtype: Box::new(Type::Scalar(PrimType::Void)),
+            params: vec![],
+        };
         assert_eq!(
             parse_decl("main: function void() = {x: char = 'a';}"),
-            AstNode::Block(vec![
-                AstNode::VarDecl {
-                    id: 1,
-                    dtype: Type::Scalar(PrimType::Char),
-                    init: Some(Box::new(AstNode::CharLit('a'))),
-                }
-            ])
+            AstNode::Function { id: 0, signature, body }
         );
     }
 
@@ -1811,23 +1989,33 @@ mod tests {
 
     #[test]
     fn parse_top_func_def_empty() {
+        let body = Box::new(AstNode::EmptyBlock);
+        let signature = Type::Function {
+            dtype: Box::new(Type::Scalar(PrimType::Int)),
+            params: vec![],
+        };
         assert_eq!(
             parser("foo: function integer() = {}").parse_top(),
-            vec![AstNode::Block(vec![])]
+            vec![AstNode::Function { id: 0, signature, body }]
         );
     }
 
     #[test]
     fn parse_top_func_def_with_body() {
+        let body = Box::new(AstNode::Block(vec![
+            AstNode::VarDecl {
+                id: 1,
+                dtype: Type::Scalar(PrimType::Int),
+                init: Some(Box::new(AstNode::IntLit(42))),
+            }
+        ]));
+        let signature = Type::Function {
+            dtype: Box::new(Type::Scalar(PrimType::Int)),
+            params: vec![],
+        };
         assert_eq!(
             parser("foo: function integer() = {x: integer = 42;}").parse_top(),
-            vec![AstNode::Block(vec![
-                AstNode::VarDecl {
-                    id: 1,
-                    dtype: Type::Scalar(PrimType::Int),
-                    init: Some(Box::new(AstNode::IntLit(42))),
-                }
-            ])]
+            vec![AstNode::Function { id: 0, signature, body }]
         );
     }
 
@@ -1836,6 +2024,6 @@ mod tests {
         let result = parser("foo: function integer(); bar: function void() = {}").parse_top();
         assert_eq!(result.len(), 2);
         assert!(matches!(result[0], AstNode::ForwardFunction { id: 0, .. }));
-        assert_eq!(result[1], AstNode::Block(vec![]));
+        assert!(matches!(result[1], AstNode::Function { id: 1, .. }));
     }
 }
