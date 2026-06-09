@@ -266,7 +266,23 @@ impl<I> Parser<I>
     }
 
     fn parse_print(&mut self) -> AstNode {
-        todo!()
+        let mut exprs = vec![];
+
+        self.scanner.must_be_kind(TokenKind::Print);
+        eprintln!("Now I expect a semicolon!");
+        if !self.scanner.maybe_kind(TokenKind::Semi, true) {
+            loop {
+                exprs.push(self.parse_expression(0));
+                match self.scanner.scan() {
+                    Some(Token { kind: TokenKind::Semi, .. }) => break,
+                    Some(Token { kind: TokenKind::Comma, .. }) => {},
+                    Some(t) => fatal_tok("Expected ',' or ';'", t),
+                    None => panic!("EOF found while expecting ',' or ';'"),
+                }
+            }
+        }
+
+        AstNode::Print(exprs)
     }
 
     fn parse_return(&mut self) -> AstNode {
@@ -2271,5 +2287,92 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert!(matches!(result[0], AstNode::ForwardFunction { id: 0, .. }));
         assert!(matches!(result[1], AstNode::Function { id: 1, .. }));
+    }
+
+    // ---- print statements ----
+
+    fn parse_print_stmt(s: &str) -> AstNode {
+        let result = parse_block(s);
+        match result {
+            AstNode::Block(stmts) if stmts.len() == 1 => stmts.into_iter().next().unwrap(),
+            _ => panic!("expected Block with one statement"),
+        }
+    }
+
+    #[test]
+    fn print_no_args() {
+        assert_eq!(
+            parse_print_stmt("{print;}"),
+            AstNode::Print(vec![])
+        );
+    }
+
+    #[test]
+    fn print_one_int() {
+        assert_eq!(
+            parse_print_stmt("{print 42;}"),
+            AstNode::Print(vec![AstNode::IntLit(42)])
+        );
+    }
+
+    #[test]
+    fn print_one_string() {
+        let result = parse_print_stmt("{print \"hello\";}");
+        match result {
+            AstNode::Print(args) => {
+                assert_eq!(args.len(), 1);
+                assert!(matches!(args[0], AstNode::StringLit(_)));
+            }
+            _ => panic!("expected Print"),
+        }
+    }
+
+    #[test]
+    fn print_multi_expr() {
+        assert_eq!(
+            parse_print_stmt("{print 1, 2, 3;}"),
+            AstNode::Print(vec![
+                AstNode::IntLit(1),
+                AstNode::IntLit(2),
+                AstNode::IntLit(3),
+            ])
+        );
+    }
+
+    #[test]
+    fn print_with_binary() {
+        assert_eq!(
+            parse_print_stmt("{print 1 + 2;}"),
+            AstNode::Print(vec![
+                AstNode::Add {
+                    left: Box::new(AstNode::IntLit(1)),
+                    right: Box::new(AstNode::IntLit(2)),
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn print_identifiers() {
+        let result = parse_print_stmt("{print a, b, c;}");
+        match result {
+            AstNode::Print(args) => {
+                assert_eq!(args.len(), 3);
+                assert!(args.iter().all(|a| matches!(a, AstNode::Ident(_))));
+            }
+            _ => panic!("expected Print"),
+        }
+    }
+
+    #[test]
+    fn print_with_postfix() {
+        let result = parse_print_stmt("{print x++;}");
+        match result {
+            AstNode::Print(args) => {
+                assert_eq!(args.len(), 1);
+                assert!(matches!(args[0], AstNode::Incr(_)));
+            }
+            _ => panic!("expected Print"),
+        }
     }
 }
