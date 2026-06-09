@@ -165,6 +165,12 @@ impl AstNode {
         let f_branch = Box::new(false_branch);
         AstNode::If { cond, t_branch, f_branch }
     }
+
+    fn make_for(assign: Vec<AstNode>, cond: AstNode, post_op: Vec<AstNode>, body: AstNode) -> AstNode {
+        let cond = Box::new(cond);
+        let body = Box::new(body);
+        AstNode::For { assign, cond, post_op, body }
+    }
 }
 
 fn binding_power(token: &Token, unary: bool) -> u8 {
@@ -217,14 +223,46 @@ impl<I> Parser<I>
         AstNode::make_if(cond, true_body, false_body)
     }
 
+    fn parse_assign(&mut self) -> AstNode {
+        let AstNode::Ident(lvalue) = self.parse_expression(0) else { panic!("Found EOF but expected an identifier") };
+        self.scanner.must_be_kind(TokenKind::Assign);
+        let expr = Box::new(self.parse_expression(0));
+        AstNode::Assignment { lvalue, expr }
+    }
+
     fn parse_for(&mut self) -> AstNode {
-        // self.scanner.must_be_kind(TokenKind::For);
-        // self.scanner.must_be_kind(TokenKind::LeftParen);
-        // self.scanner.must_be_kind(TokenKind::Semi);
-        // self.scanner.must_be_kind(TokenKind::Semi);
-        // self.scanner.must_be_kind(TokenKind::RightParen);
-        // let body = self.parse_block();
-        todo!()
+        let mut init = vec![];
+        let mut post = vec![];
+
+        self.scanner.must_be_kind(TokenKind::For);
+        self.scanner.must_be_kind(TokenKind::LeftParen);
+        if !self.scanner.maybe_kind(TokenKind::Semi, true) { // Consume if matching
+            loop {
+                init.push(self.parse_assign());
+                match self.scanner.scan() {
+                    Some(Token { kind: TokenKind::Semi, .. }) => break,
+                    Some(Token { kind: TokenKind::Comma, .. }) => {},
+                    Some(t) => fatal_tok("Expected ',' or ';'", t),
+                    None => panic!("EOF found when expecting ',' or ';'"),
+                }
+            }
+        }
+        let cond = self.parse_expression(0);
+        self.scanner.must_be_kind(TokenKind::Semi);
+        if !self.scanner.maybe_kind(TokenKind::RightParen, true) { // Consume if matching
+            loop {
+                post.push(self.parse_expression(0));
+                match self.scanner.scan() {
+                    Some(Token { kind: TokenKind::RightParen, .. }) => break,
+                    Some(Token { kind: TokenKind::Comma, .. }) => {},
+                    Some(t) => fatal_tok("Expected ',' or ')'", t),
+                    None => panic!("EOF found when expecting ',' or ')'"),
+                }
+            }
+        }
+        let body = self.parse_block();
+
+        AstNode::make_for(init, cond, post, body)
     }
 
     fn parse_print(&mut self) -> AstNode {
@@ -1856,6 +1894,214 @@ mod tests {
     #[should_panic(expected = "Expected ')'")]
     fn if_missing_rparen() {
         parse_block("{if (true { x = 1; }}");
+    }
+
+    // ---- for statements ----
+
+    fn parse_for_stmt(s: &str) -> AstNode {
+        let result = parse_block(s);
+        match result {
+            AstNode::Block(stmts) if stmts.len() == 1 => stmts.into_iter().next().unwrap(),
+            _ => panic!("expected Block with one statement"),
+        }
+    }
+
+    #[test]
+    fn for_minimal() {
+        assert_eq!(
+            parse_for_stmt("{for (; true;) {}}"),
+            AstNode::For {
+                assign: vec![],
+                cond: Box::new(AstNode::BoolVal(true)),
+                post_op: vec![],
+                body: Box::new(AstNode::EmptyBlock),
+            }
+        );
+    }
+
+    #[test]
+    fn for_with_assign_init() {
+        assert_eq!(
+            parse_for_stmt("{for (x = 0; true;) {}}"),
+            AstNode::For {
+                assign: vec![
+                    AstNode::Assignment {
+                        lvalue: 0,
+                        expr: Box::new(AstNode::IntLit(0)),
+                    }
+                ],
+                cond: Box::new(AstNode::BoolVal(true)),
+                post_op: vec![],
+                body: Box::new(AstNode::EmptyBlock),
+            }
+        );
+    }
+
+    #[test]
+    fn for_with_multiple_assign_init() {
+        assert_eq!(
+            parse_for_stmt("{for (x = 0, y = 1; true;) {}}"),
+            AstNode::For {
+                assign: vec![
+                    AstNode::Assignment {
+                        lvalue: 0,
+                        expr: Box::new(AstNode::IntLit(0)),
+                    },
+                    AstNode::Assignment {
+                        lvalue: 1,
+                        expr: Box::new(AstNode::IntLit(1)),
+                    }
+                ],
+                cond: Box::new(AstNode::BoolVal(true)),
+                post_op: vec![],
+                body: Box::new(AstNode::EmptyBlock),
+            }
+        );
+    }
+
+    #[test]
+    fn for_with_cond() {
+        assert_eq!(
+            parse_for_stmt("{for (; a < b;) {}}"),
+            AstNode::For {
+                assign: vec![],
+                cond: Box::new(AstNode::Lss {
+                    left: Box::new(AstNode::Ident(0)),
+                    right: Box::new(AstNode::Ident(1)),
+                }),
+                post_op: vec![],
+                body: Box::new(AstNode::EmptyBlock),
+            }
+        );
+    }
+
+    #[test]
+    fn for_with_post_incr() {
+        assert_eq!(
+            parse_for_stmt("{for (; true; i++) {}}"),
+            AstNode::For {
+                assign: vec![],
+                cond: Box::new(AstNode::BoolVal(true)),
+                post_op: vec![AstNode::Incr(0)],
+                body: Box::new(AstNode::EmptyBlock),
+            }
+        );
+    }
+
+    #[test]
+    fn for_with_post_decr() {
+        assert_eq!(
+            parse_for_stmt("{for (; true; i--) {}}"),
+            AstNode::For {
+                assign: vec![],
+                cond: Box::new(AstNode::BoolVal(true)),
+                post_op: vec![AstNode::Decr(0)],
+                body: Box::new(AstNode::EmptyBlock),
+            }
+        );
+    }
+
+    #[test]
+    fn for_with_multiple_post_ops() {
+        assert_eq!(
+            parse_for_stmt("{for (; true; i++, j--) {}}"),
+            AstNode::For {
+                assign: vec![],
+                cond: Box::new(AstNode::BoolVal(true)),
+                post_op: vec![AstNode::Incr(0), AstNode::Decr(1)],
+                body: Box::new(AstNode::EmptyBlock),
+            }
+        );
+    }
+
+    #[test]
+    fn for_full() {
+        assert_eq!(
+            parse_for_stmt("{for (x = 0; x < 10; x++) { x = x * 2; }}"),
+            AstNode::For {
+                assign: vec![
+                    AstNode::Assignment {
+                        lvalue: 0,
+                        expr: Box::new(AstNode::IntLit(0)),
+                    }
+                ],
+                cond: Box::new(AstNode::Lss {
+                    left: Box::new(AstNode::Ident(0)),
+                    right: Box::new(AstNode::IntLit(10)),
+                }),
+                post_op: vec![AstNode::Incr(0)],
+                body: Box::new(AstNode::Block(vec![
+                    AstNode::Assignment {
+                        lvalue: 0,
+                        expr: Box::new(AstNode::Mul {
+                            left: Box::new(AstNode::Ident(0)),
+                            right: Box::new(AstNode::IntLit(2)),
+                        }),
+                    }
+                ])),
+            }
+        );
+    }
+
+    #[test]
+    fn for_non_empty_body() {
+        assert_eq!(
+            parse_for_stmt("{for (; true;) { x: integer = 42; y = x; }}"),
+            AstNode::For {
+                assign: vec![],
+                cond: Box::new(AstNode::BoolVal(true)),
+                post_op: vec![],
+                body: Box::new(AstNode::Block(vec![
+                    AstNode::VarDecl {
+                        id: 0,
+                        dtype: Type::Scalar(PrimType::Int),
+                        init: Some(Box::new(AstNode::IntLit(42))),
+                    },
+                    AstNode::Assignment {
+                        lvalue: 1,
+                        expr: Box::new(AstNode::Ident(0)),
+                    },
+                ])),
+            }
+        );
+    }
+
+    #[test]
+    fn for_nested() {
+        assert_eq!(
+            parse_for_stmt("{for (; true;) { for (; true;) {} }}"),
+            AstNode::For {
+                assign: vec![],
+                cond: Box::new(AstNode::BoolVal(true)),
+                post_op: vec![],
+                body: Box::new(AstNode::Block(vec![
+                    AstNode::For {
+                        assign: vec![],
+                        cond: Box::new(AstNode::BoolVal(true)),
+                        post_op: vec![],
+                        body: Box::new(AstNode::EmptyBlock),
+                    }
+                ])),
+            }
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected '('")]
+    fn for_missing_lparen() {
+        parse_block("{for ;; {}}");
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected ';'")]
+    fn for_missing_semi() {
+        parse_block("{for (; x < 10) {}}");
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected ',' or ')'")]
+    fn for_missing_rparen() {
+        parse_block("{for (; true; x++ {}}");
     }
 
     // ---- function declarations ----

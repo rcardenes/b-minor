@@ -257,12 +257,35 @@ impl<I> Scanner<I>
         self.next_if(|&c| c == tc)
     }
 
+    /// Ensures that there's a next token and that it is of some specific kind.
+    /// If we're at EOF or the token doesn't match, this function will panic.
+    /// Otherwise there is no effect besides consuming the accepted token.
     pub fn must_be_kind(&mut self, kind: TokenKind) {
         let Some(tk) = self.scan() else { panic!("Found EOF while expecting token '{kind}'") };
 
         if tk.kind != kind {
             let msg = format!("Expected '{kind}'");
             fatal_tok(&msg, tk)
+        }
+    }
+
+    pub fn is_eof(&mut self) -> bool {
+        self.peek().is_none()
+    }
+
+    /// Tests if there is a next token and if it matches certain specific kind.
+    /// If `discard` is `true`, and the next token matches, the next token
+    /// is discarded. Otherwise it's kept back.
+    ///
+    /// The function returns `true` upon match, and `false` if there is no match
+    /// or the token stream is at EOF.
+    pub fn maybe_kind(&mut self, kind: TokenKind, discard: bool) -> bool {
+        let Some(tk) = self.peek() else { return false };
+        if tk.kind == kind {
+            if discard { self.discard_token(); }
+            true
+        } else {
+            false
         }
     }
 
