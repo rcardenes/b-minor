@@ -1,0 +1,24 @@
+// A simple program illustrating scope aliasing.
+// This program should work and print the following:
+//
+// $ ./example3
+// 10
+// hello
+// false
+
+x: integer = 10;
+
+f: function void ( x: string ) =
+{
+    print x, "\n";
+    {
+        x: boolean = false;
+        print x, "\n";
+    }
+}
+
+main: function void () =
+{
+    print x, "\n";
+    f("hello");
+}

@@ -319,7 +319,9 @@ impl<I> Parser<I>
                             AstNode::make_assignment(id, expr)
                         },
                         Some(Token { kind: TokenKind::Colon, .. }) => {
-                            self.parse_var_decl(id)
+                            let decl = self.parse_var_decl_with_id(id);
+                            self.scanner.must_be_kind(TokenKind::Semi);
+                            decl
                         },
                         Some(t) => fatal_tok("Expected '=' or ':'", t),
                         None => panic!("Found EOF when expecting '=' or ':'"),
@@ -362,7 +364,7 @@ impl<I> Parser<I>
             self.scanner.discard_token();
         } else {
             loop {
-                params.push(self.parse_expression(0));
+                params.push(self.parse_var_decl());
                 match self.scanner.scan() {
                     Some(Token { kind: TokenKind::Comma, .. }) => {},
                     Some(Token { kind: TokenKind::RightParen, .. }) => break,
@@ -373,6 +375,49 @@ impl<I> Parser<I>
         }
 
         Type::make_signature(ret_type, params)
+    }
+
+    fn parse_var_decl(&mut self) -> AstNode {
+        let id = match self.scanner.scan() {
+            Some(Token { kind: TokenKind::Ident(id), .. }) => id,
+            Some(t) => fatal_tok("Expected a variable declaration", t),
+            None => panic!("EOF found while expecting a declaration"),
+        };
+
+        self.scanner.must_be_kind(TokenKind::Colon);
+        self.parse_var_decl_with_id(id)
+    }
+
+    fn parse_var_decl_with_id(&mut self, ident: usize) -> AstNode {
+        let dtype = self.parse_var_decl_type();
+        let init = if let Some(Token { kind: TokenKind::Assign, .. }) = self.scanner.peek() {
+            self.scanner.discard_token();
+            match dtype {
+                Type::Array { .. } => {
+                    let mut args = vec![];
+                    self.scanner.must_be_kind(TokenKind::LeftBrk);
+                    loop {
+                        args.push(self.parse_expression(0));
+                        match self.scanner.scan() {
+                            Some(Token { kind: TokenKind::Comma, .. }) => {},
+                            Some(Token { kind: TokenKind::RightBrk, .. }) => break,
+                            Some(t) => fatal_tok("Expected ',' or ']'", t),
+                            None => panic!("EOF found parsing array initialization"),
+                        }
+                    }
+                    Some(AstNode::ArrayInitializer(args))
+                },
+                _ => {
+                    let Some(next) = self.scanner.scan() else {
+                        panic!("Found EOF while waiting for a literal")
+                    };
+                    Some(AstNode::make_literal(next))
+                }
+            }
+        } else {
+            None
+        };
+        AstNode::make_var_decl(ident, dtype, init)
     }
 
     fn parse_var_decl_type(&mut self) -> Type {
@@ -491,39 +536,6 @@ impl<I> Parser<I>
         left_node
     }
 
-    fn parse_var_decl(&mut self, ident: usize) -> AstNode {
-        let dtype = self.parse_var_decl_type();
-        let init = if let Some(Token { kind: TokenKind::Assign, .. }) = self.scanner.peek() {
-            self.scanner.discard_token();
-            match dtype {
-                Type::Array { .. } => {
-                    let mut args = vec![];
-                    self.scanner.must_be_kind(TokenKind::LeftBrk);
-                    loop {
-                        args.push(self.parse_expression(0));
-                        match self.scanner.scan() {
-                            Some(Token { kind: TokenKind::Comma, .. }) => {},
-                            Some(Token { kind: TokenKind::RightBrk, .. }) => break,
-                            Some(t) => fatal_tok("Expected ',' or ']'", t),
-                            None => panic!("EOF found parsing array initialization"),
-                        }
-                    }
-                    Some(AstNode::ArrayInitializer(args))
-                },
-                _ => {
-                    let Some(next) = self.scanner.scan() else {
-                        panic!("Found EOF while waiting for a literal")
-                    };
-                    Some(AstNode::make_literal(next))
-                }
-            }
-        } else {
-            None
-        };
-        self.scanner.must_be_kind(TokenKind::Semi); // ;
-        AstNode::make_var_decl(ident, dtype, init)
-    }
-
     fn declaration(&mut self) -> Option<AstNode> {
         let ident = match self.scanner.scan() {
             Some(Token { kind: TokenKind::Ident(id), .. }) => id,
@@ -547,7 +559,9 @@ impl<I> Parser<I>
             },
             Some(t) if t.is_type() => {
                 self.scanner.put_token(t);
-                self.parse_var_decl(ident)
+                let decl = self.parse_var_decl_with_id(ident);
+                self.scanner.must_be_kind(TokenKind::Semi);
+                decl
             },
             Some(Token { pos, .. }) => fatal("Expected 'function' or a type", pos),
             None => panic!("Found EOF parsing a declaration"),
@@ -1354,41 +1368,28 @@ mod tests {
     #[test]
     fn func_sig_one_param() {
         assert_eq!(
-            parse_func_sig("integer(x)"),
-            Type::Function {
-                dtype: Box::new(Type::Scalar(PrimType::Int)),
-                params: vec![AstNode::Ident(0)],
-            }
+            parse_func_sig("integer(x: integer)"),
+            Type::make_signature(
+                Type::Scalar(PrimType::Int),
+                vec![AstNode::make_var_decl(0, Type::Scalar(PrimType::Int), None)],
+            )
         );
     }
 
     #[test]
     fn func_sig_multi_params() {
         assert_eq!(
-            parse_func_sig("char(x, y)"),
-            Type::Function {
-                dtype: Box::new(Type::Scalar(PrimType::Char)),
-                params: vec![AstNode::Ident(0), AstNode::Ident(1)],
-            }
+            parse_func_sig("char(x: boolean, y: string)"),
+            Type::make_signature(
+                Type::Scalar(PrimType::Char),
+                vec![AstNode::make_var_decl(0, Type::Scalar(PrimType::Bool), None),
+                     AstNode::make_var_decl(1, Type::Scalar(PrimType::String), None)],
+                ),
         );
     }
 
     #[test]
-    fn func_sig_params_with_expr() {
-        assert_eq!(
-            parse_func_sig("integer(1 + 2)"),
-            Type::Function {
-                dtype: Box::new(Type::Scalar(PrimType::Int)),
-                params: vec![AstNode::Add {
-                    left: Box::new(AstNode::IntLit(1)),
-                    right: Box::new(AstNode::IntLit(2)),
-                }],
-            }
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "Found EOF expecting an expression")]
+    #[should_panic(expected = "EOF found while expecting a declaration")]
     fn func_sig_missing_paren() {
         parser("integer(").parse_function_signature();
     }
@@ -1396,7 +1397,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Expected ',' or ')'")]
     fn func_sig_bad_separator() {
-        parser("integer(x y)").parse_function_signature();
+        parser("integer(x: char y: char)").parse_function_signature();
     }
 
     // ---- parse_block ----
@@ -2144,14 +2145,18 @@ mod tests {
 
     #[test]
     fn forward_func_with_params() {
+        let sig = Type::make_signature(
+            Type::Scalar(PrimType::Void),
+            vec![
+                AstNode::make_var_decl(1, Type::Scalar(PrimType::Int), None),
+                AstNode::make_var_decl(2, Type::Scalar(PrimType::Char), None),
+            ]
+        );
         assert_eq!(
-            parse_decl("foo: function void(x, y);"),
+            parse_decl("foo: function void(x: integer, y: char);"),
             AstNode::ForwardFunction {
                 id: 0,
-                signature: Type::Function {
-                    dtype: Box::new(Type::Scalar(PrimType::Void)),
-                    params: vec![AstNode::Ident(1), AstNode::Ident(2)],
-                },
+                signature: sig,
             }
         );
     }
