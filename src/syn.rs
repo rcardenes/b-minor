@@ -54,7 +54,7 @@ pub enum AstNode {
     If { cond: Box<AstNode>, t_branch: Box<AstNode>, f_branch: Box<AstNode> },
     For { assign: Vec<AstNode>, cond: Box<AstNode>, post_op: Vec<AstNode>, body: Box<AstNode> },
     Print(Vec<AstNode>),
-    Return(Box<AstNode>),
+    Return(Option<Box<AstNode>>),
     Assignment { lvalue: usize, expr: Box<AstNode> },
 
     // Expressions
@@ -155,8 +155,8 @@ impl AstNode {
         AstNode::Assignment { lvalue, expr }
     }
 
-    fn make_return(expr: AstNode) -> AstNode {
-        AstNode::Return(Box::new(expr))
+    fn make_return(expr: Option<AstNode>) -> AstNode {
+        AstNode::Return(expr.map(Box::new))
     }
 
     fn make_if(cond: AstNode, true_branch: AstNode, false_branch: AstNode) -> AstNode {
@@ -286,7 +286,14 @@ impl<I> Parser<I>
     }
 
     fn parse_return(&mut self) -> AstNode {
-        todo!()
+        self.scanner.must_be_kind(TokenKind::Return);
+        if self.scanner.maybe_kind(TokenKind::Semi, true) {
+            AstNode::make_return(None)
+        } else {
+            let ret = AstNode::make_return(Some(self.parse_expression(0)));
+            self.scanner.must_be_kind(TokenKind::Semi);
+            ret
+        }
     }
 
     fn parse_block(&mut self) -> AstNode {
@@ -2374,5 +2381,119 @@ mod tests {
             }
             _ => panic!("expected Print"),
         }
+    }
+
+    // ---- return statements ----
+
+    fn parse_return_stmt(s: &str) -> AstNode {
+        let result = parse_block(s);
+        match result {
+            AstNode::Block(stmts) if stmts.len() == 1 => stmts.into_iter().next().unwrap(),
+            _ => panic!("expected Block with one statement"),
+        }
+    }
+
+    #[test]
+    fn return_no_expr() {
+        assert_eq!(
+            parse_return_stmt("{return;}"),
+            AstNode::Return(None)
+        );
+    }
+
+    #[test]
+    fn return_int() {
+        assert_eq!(
+            parse_return_stmt("{return 42;}"),
+            AstNode::Return(Some(Box::new(AstNode::IntLit(42))))
+        );
+    }
+
+    #[test]
+    fn return_ident() {
+        assert_eq!(
+            parse_return_stmt("{return x;}"),
+            AstNode::Return(Some(Box::new(AstNode::Ident(0))))
+        );
+    }
+
+    #[test]
+    fn return_complex_expr() {
+        assert_eq!(
+            parse_return_stmt("{return 1 + 2;}"),
+            AstNode::Return(Some(Box::new(AstNode::Add {
+                left: Box::new(AstNode::IntLit(1)),
+                right: Box::new(AstNode::IntLit(2)),
+            })))
+        );
+    }
+
+    #[test]
+    fn return_bool() {
+        assert_eq!(
+            parse_return_stmt("{return true;}"),
+            AstNode::Return(Some(Box::new(AstNode::BoolVal(true))))
+        );
+    }
+
+    #[test]
+    fn return_char() {
+        assert_eq!(
+            parse_return_stmt("{return 'a';}"),
+            AstNode::Return(Some(Box::new(AstNode::CharLit('a'))))
+        );
+    }
+
+    #[test]
+    fn return_string() {
+        let result = parse_return_stmt("{return \"hello\";}");
+        match result {
+            AstNode::Return(Some(expr)) => {
+                assert!(matches!(*expr, AstNode::StringLit(_)));
+            }
+            _ => panic!("expected Return with StringLit"),
+        }
+    }
+
+    #[test]
+    fn return_unary_minus() {
+        assert_eq!(
+            parse_return_stmt("{return -5;}"),
+            AstNode::Return(Some(Box::new(AstNode::Minus(Box::new(AstNode::IntLit(5))))))
+        );
+    }
+
+    #[test]
+    fn return_func_call() {
+        let result = parse_return_stmt("{return foo(42);}");
+        match result {
+            AstNode::Return(Some(expr)) => {
+                assert!(matches!(*expr, AstNode::FuncCall { .. }));
+            }
+            _ => panic!("expected Return with FuncCall"),
+        }
+    }
+
+    #[test]
+    fn return_post_incr() {
+        let result = parse_return_stmt("{return x++;}");
+        match result {
+            AstNode::Return(Some(expr)) => {
+                assert!(matches!(*expr, AstNode::Incr(_)));
+            }
+            _ => panic!("expected Return with Incr"),
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected to find")]
+    fn return_missing_semi_no_expr() {
+        parse_block("{return}");
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected ';'")]
+    fn return_missing_semi_with_expr() {
+        parse_block("{return 42}");
     }
 }
