@@ -1,0 +1,10 @@
+x: integer;
+y: integer;
+
+main: function integer () = {
+  x = 15;
+  y = 20;
+  z: integer;
+  z = x + y;
+  print x, ", ", y, ", ", z, "\n";
+}

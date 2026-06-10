@@ -141,7 +141,7 @@ impl AstNode {
     }
 
     fn make_var_decl(id: usize, dtype: Type, init: Option<AstNode>) -> AstNode {
-        let init = init.map(|node| Box::new(node));
+        let init = init.map(Box::new);
         AstNode::VarDecl { id, dtype, init }
     }
 
@@ -203,7 +203,7 @@ pub struct Parser<I>
 impl<I> Parser<I>
     where I: Iterator<Item=char>
 {
-    fn new(scanner: Scanner<I>) -> Self {
+    pub fn new(scanner: Scanner<I>) -> Self {
         Parser { scanner }
     }
 
@@ -269,7 +269,6 @@ impl<I> Parser<I>
         let mut exprs = vec![];
 
         self.scanner.must_be_kind(TokenKind::Print);
-        eprintln!("Now I expect a semicolon!");
         if !self.scanner.maybe_kind(TokenKind::Semi, true) {
             loop {
                 exprs.push(self.parse_expression(0));
