@@ -16,7 +16,12 @@ useful mostly when including double quotes into a string...
 
 Note 5: The `if` condition expression **must** evaluate to a boolean.
 
-Note 6: The expressions are not included in the grammar - use your imagination :-P
+Note 6: Array size in declarations must be a constant value (a literal in this case
+for global declarations. Within blocks though, this can be any expression that evaluates
+to an integer - this will be enforced during the semantic phase though.
+
+Note 7: The expressions are not included in the grammar - use your imagination :-P
+
 
     program               : [ declaration , { declaration } ] ;
 
@@ -67,7 +72,7 @@ Note 6: The expressions are not included in the grammar - use your imagination :
 
     array_declaration     : array_decl_pref , { array_decl_pref } , type ,  [ array_initialization ] ;
 
-    array_decl_pref       : 'array' , '[' , integer_literal , ']' ;
+    array_decl_pref       : 'array' , '[' , expression , ']' ;
 
     array_initialization  : '{' , array_init_element , { ',' , array_init_element } , '}' ;
 
