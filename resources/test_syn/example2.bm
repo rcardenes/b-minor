@@ -1,0 +1,26 @@
+// Some global variables
+b: boolean;
+c: char;
+i: integer;
+s: string;
+ab: array [2] boolean;
+aab: array [2] array [2] boolean;
+
+main: function integer () = {
+    lb: boolean = false;
+    lc: char;
+    li: integer;
+    ls: string;
+    lab: array [2] boolean;
+    laab: array [2] array [2] boolean;
+
+    if (!lb) {
+        print "it's false\n";
+    } else {
+        print "it's true!\n";
+    }
+
+    for (; true ;) {
+        return li * 5;
+    }
+}
