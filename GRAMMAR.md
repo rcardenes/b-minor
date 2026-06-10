@@ -1,15 +1,5 @@
 # B-minor Grammar
 
-The grammar was initially reverse-engineered from the book (Introduction to
-Compilers and Language Design), but later I learned that the author teaches
-a CSE 40243 class at UND, and he's been gracious enough to publish an overview
-of the language. He changes bits respect of what was published in the book to
-keep it challenging for the students (e.g.,
-[you can read the one for 2025](https://dthain.github.io/compilers-fa25/bminor)). Among
-other things, the document includes a FAQ which clarifies certain questions. The
-grammar below reflects my original understanding of the grammar, plus the changes
-for the 2025 class.
-
 Note 1: whitespace (space, tab, linefeed, carriage return) and comments are the
 same as in C and C++.
 

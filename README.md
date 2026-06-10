@@ -1,7 +1,8 @@
 # B-Minor compiler
 
-This is an implementation of the B-Minor language as described in the 2020 book
-"Introduction to Compilers and Language Design", by Douglas L. Thain.
+This is an implementation of the B-Minor language (originally, see below) as
+described in the 2020 book "Introduction to Compilers and Language Design",
+by Douglas L. Thain.
 
 The book doesn't provide a full grammar, on purpose, as this is an undergraduate
 textbook and the author prefers that the student puts some effort on figuring
@@ -13,12 +14,39 @@ hopefully it won't be needed!)
 The main purpose of this implementation is working on IR and optimization, as
 approached by this book.
 
+## Note on Grammar and Implementation Details
+
+The grammar was initially reverse-engineered from the book, but later I learned
+that the author teaches a CSE 40243 class at UND, and he's been gracious enough to
+publish an overview of the language. He changes bits respect of what was published
+in the book to keep it challenging for the students (e.g.,
+[you can read the one for 2025](https://dthain.github.io/compilers-fa25/bminor)).
+
+He's still vague at times and there are typos in the notes (e.g. in 2025 he includes
+`while` among the keywords, but then he specifies there's no `while` in the language).
+Among other things, the document includes a FAQ which clarifies certain questions. The
+contents of `GRAMMAR.md` reflects my original understanding of the grammar, plus the
+changes for the 2025 class. See the section "Additional Functionality" at the bottom.
+
+### Divergence from the stated "standard"
+
+Q2.2 in the 2025 FAQ regarding the `for` syntax reads:
+
+> No, commas may only be used in print statements, function calls, function prototypes,
+> and array expressions.
+
+Meaning that this is illegal:
+
+    for (i = 0, j = 0;; i++, j++)
+
+By the time I read it I had implemented this already, and it stays.
+
 ## AI Usage (or Lack Thereof)
 
 As mentioned above, the purpose of writing this compiler is purely educational,
-and thus using AI for writing its code would be pointless. I'll be using it to
+and thus using AI for writing the code would be pointless. I'll be using it to
 along with `cargo tarpaulin` to check for test coverage and to suggest and
-generate test cases (which can be rather tedious).
+generate test cases (which can be rather tedious) ahead of writing the code itself.
 
 ## Language Features
 
@@ -54,8 +82,9 @@ Comparisons can be performed over any kind of arguments, but only if their types
 
 Most of the operators are a subset of those from C and they have the same precedence:
 
-    [] f()                 array subscript, function call
+    () [] f()              grouping, array subscript, function call
     ++ --                  postfix increment/decrement
+    #                      unary array length
     - !                    unary negation, logical not
     ^                      exponentiation
     * / %                  multiplication, division, modulus
@@ -114,6 +143,18 @@ the same way you'd do in C. Here are the models:
         // code
     }
 
+## Additional Functionality
+
+These details will be included in the language in the order specified:
+
+- [ ] Integers may be represented as decimal, hexidecimal or binary.
+- [ ] Strings and characters have a number of additional escape codes.
+- [ ] Double precision floating point values, types, and operators have been added.
+- [ ] auto indicates a variable type to be inferred from context.
+- [ ] Arrays have an intrinsic length that is bounds-checked at runtime and read by the # operator.
+- [ ] A special `carray` type provides simple C-style arrays without boundary checking,
+  for compatibility.
+
 ## Challenges
 
 The book estimates that an undergraduate class should keep busy for a whole semester
@@ -134,99 +175,3 @@ challenges (which I intend to implement):
 - [ ] Add an alternative control flow structure like `switch`. For an extra challenge, allow
   `switch` to select value ranges, not just constants.
 - [ ] Implement structure types.
-
-## Grammar
-
-Note 1: whitespace (space, tab, linefeed, carriage return) and comments are the
-same as in C and C++.
-
-Note 2: The following are keywords and can't be used as identifiers: `array`,
-`boolean`, `char`, `else`, `false`, `for`, `function`, `if`, `integer`,
-`print`, `return`, `string`, `true`, `void`.
-
-Note 3: characters and strings are _not_ wide; they contain simply ASCII characters,
-as far as the language is concerned.
-
-Note 4: the only recognized quoted characters are `\n` and `\0`. Any other character
-preceded by a backslash (`\`) will became that character itself - this is of course
-useful mostly when including double quotes into a string...
-
-Note 5: The `if` condition expression must evaluate to a boolean.
-
-Note 6: The expressions are not included in the grammar - use your imagination :-P
-
-    program               : [ declaration , { declaration } ] ;
-
-    declaration           : function_declaration | var_declaration ;
-
-    statement             : assignment_statement
-                          | for_statement
-                          | if_statement
-                          | print_statement
-                          | return_statement
-                          | block
-                          ;
-
-    block                 : '{' , { decl_or_statement } , '}' ;
-
-    decl_or_statement     : var_declaration
-                          | array_declaration
-                          | statement
-                          ;
-
-    assignment_statement  : assignment , ';'
-
-    for_statement         : 'for' , '(' , [ assignment , { ',' , assignment } ] , ';' , expression , ';' , expression , ')' , block ;
-
-    assignment            : identifier , '=' , expression ;
-
-    if_statement          : 'if' , '(' , expression , ')' , block , [ 'else' , block ] ;
-
-    print_statement       : 'print' , expression , { ',' , expression } , ';' ;
-
-    return_statement      : 'return' , expression ;
-
-    function_declaration  : function_signature , '=' , block ;
-
-    function_prototype    : function_signature , ';' ;
-
-    function_signature    : identifier , ':' , 'function' , return_type , '(' , [ parameter , { ',' , parameter } ] , ')' ;
-
-    return_type           : type | 'void' ;
-
-    parameter             : identifier , ':' , ( type | array_type ) ;
-
-    array_type            : array_type_pref , { array_type_pref } , type ;
-
-    array_type_pref       : 'array' , '[' , ']' ;
-
-    var_declaration       : identifier , ':' ( scalar_declaration | array_declaration ) , ';' ;
-
-    array_declaration     : array_decl_pref , { array_decl_pref } , type ,  [ array_initialization ] ;
-
-    array_decl_pref       : 'array' , '[' , integer_literal , ']' ;
-
-    array_initialization  : '{' , array_init_element , { ',' , array_init_element } , '}' ;
-
-    array_init_element    : literal
-                          | array_initialization
-                          ;
-
-    scalar_declaration    : type , [ var_initialization ] , ';' ;
-
-    scalar_initialization : '=' , literal ;
-
-    type                  : 'boolean' | 'char' | 'integer' | 'string' ;
-
-    identifier            : ( letter | '_' ) , { letter | digit | '_' } ;
-
-    integer_literal       : digit , { digit } ;
-
-    boolean_literal       : 'true' | 'false' ;
-
-    char_literal          : "'" , 8_BIT_ASCII_CHARACTER , "'" ;
-
-    string_literal        : '"' , [ STRING_OF_ASCII_CHARACTERS ] , '"' ;
-
-    digit                 : '0' | ... | '9' ;
-    letter                : 'A' | ... | 'Z' | 'a' | ... | 'z' ;
