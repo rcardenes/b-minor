@@ -139,7 +139,7 @@ impl Display for TokenKind {
 pub struct Pos { line: usize, col: usize }
 
 impl Pos {
-    fn at(line: usize, col: usize) -> Self {
+    pub(crate) fn at(line: usize, col: usize) -> Self {
         Pos { line, col }
     }
 }
@@ -171,6 +171,13 @@ impl Token {
 
     pub fn is_function_type(&self) -> bool {
         self.kind == TokenKind::Void || self.is_type()
+    }
+}
+
+// Useful mostly for testing because the position is not useful
+impl From<TokenKind> for Token {
+    fn from(value: TokenKind) -> Self {
+        Token::at(value, Pos::at(0, 0))
     }
 }
 

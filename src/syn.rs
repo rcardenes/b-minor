@@ -119,9 +119,9 @@ impl<I> Parser<I>
     fn parse_return(&mut self) -> AstNode {
         self.scanner.must_be_kind(TokenKind::Return);
         if self.scanner.maybe_kind(TokenKind::Semi, true) {
-            AstNode::make_return(None)
+            AstNode::VoidReturn
         } else {
-            let ret = AstNode::make_return(Some(self.parse_expression(0)));
+            let ret = AstNode::make_return(self.parse_expression(0));
             self.scanner.must_be_kind(TokenKind::Semi);
             ret
         }
@@ -408,7 +408,10 @@ impl<I> Parser<I>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scan::Scanner;
+    use crate::{
+        ast::{BinaryOp, ExprKind},
+        scan::{Scanner, Pos},
+    };
     use std::string::IntoChars;
     use rstest::rstest;
 
@@ -427,27 +430,27 @@ mod tests {
 
     #[test]
     fn int_lit() {
-        assert_eq!(parse("42"), AstNode::IntLit(42));
+        assert_eq!(parse("42"), AstNode::Expr(ExprKind::IntLit(42)));
     }
 
     #[test]
     fn char_lit() {
-        assert_eq!(parse("'a'"), AstNode::CharLit('a'));
+        assert_eq!(parse("'a'"), AstNode::Expr(ExprKind::CharLit('a')));
     }
 
     #[test]
     fn string_lit() {
-        assert!(matches!(parse("\"hello\""), AstNode::StringLit(_)));
+        assert!(matches!(parse("\"hello\""), AstNode::Expr(ExprKind::StringLit(_))));
     }
 
     #[test]
     fn bool_true() {
-        assert_eq!(parse("true"), AstNode::BoolVal(true));
+        assert_eq!(parse("true"), AstNode::Expr(ExprKind::BoolVal(true)));
     }
 
     #[test]
     fn bool_false() {
-        assert_eq!(parse("false"), AstNode::BoolVal(false));
+        assert_eq!(parse("false"), AstNode::Expr(ExprKind::BoolVal(false)));
     }
 
     #[test]
@@ -459,25 +462,25 @@ mod tests {
 
     #[test]
     fn grouped_expr() {
-        assert_eq!(parse("(42)"), AstNode::IntLit(42));
+        assert_eq!(parse("(42)"), AstNode::Expr(ExprKind::IntLit(42)));
     }
 
     #[test]
     fn nested_grouped_expr() {
-        assert_eq!(parse("((42))"), AstNode::IntLit(42));
+        assert_eq!(parse("((42))"), AstNode::Expr(ExprKind::IntLit(42)));
     }
 
     #[test]
     fn grouped_binary() {
         assert_eq!(
             parse("(1 + 2) * 3"),
-            AstNode::Mul {
-                left: Box::new(AstNode::Add {
-                    left: Box::new(AstNode::IntLit(1)),
-                    right: Box::new(AstNode::IntLit(2)),
-                }),
-                right: Box::new(AstNode::IntLit(3)),
-            }
+            AstNode::make_binary(
+                Token::at(TokenKind::Star, Pos::at(1, 1)),
+                AstNode::make_binary(
+                    Token::at(TokenKind::Plus, Pos::at(1, 1)),
+                    AstNode::Expr(ExprKind::IntLit(1)),
+                    AstNode::Expr(ExprKind::IntLit(2))),
+                AstNode::Expr(ExprKind::IntLit(3))),
         );
     }
 
@@ -487,7 +490,7 @@ mod tests {
     fn unary_minus_int() {
         assert_eq!(
             parse("-5"),
-            AstNode::Minus(Box::new(AstNode::IntLit(5)))
+            AstNode::make_minus(AstNode::Expr(ExprKind::IntLit(5)))
         );
     }
 
@@ -495,7 +498,7 @@ mod tests {
     fn unary_not_true() {
         assert_eq!(
             parse("!true"),
-            AstNode::Not(Box::new(AstNode::BoolVal(true)))
+            AstNode::make_not(AstNode::Expr(ExprKind::BoolVal(true)))
         );
     }
 
@@ -503,10 +506,12 @@ mod tests {
     fn unary_minus_grouped() {
         assert_eq!(
             parse("-(1 + 2)"),
-            AstNode::Minus(Box::new(AstNode::Add {
-                left: Box::new(AstNode::IntLit(1)),
-                right: Box::new(AstNode::IntLit(2)),
-            }))
+            AstNode::make_minus(
+                AstNode::make_binary(
+                    Token::at(TokenKind::Plus, Pos::at(1, 1)),
+                    AstNode::Expr(ExprKind::IntLit(1)),
+                    AstNode::Expr(ExprKind::IntLit(2)),
+                ))
         );
     }
 
@@ -516,7 +521,7 @@ mod tests {
     fn post_increment() {
         assert_eq!(
             parse("a++"),
-            AstNode::Incr(0)
+            AstNode::Expr(ExprKind::Incr(0))
         );
     }
 
@@ -524,27 +529,27 @@ mod tests {
     fn post_decrement() {
         assert_eq!(
             parse("a--"),
-            AstNode::Decr(0)
+            AstNode::Expr(ExprKind::Decr(0))
         );
     }
 
     // ---- Binary Operators ----
 
     #[rstest]
-    #[case("+", AstNode::Add { left: Box::new(AstNode::IntLit(1)), right: Box::new(AstNode::IntLit(2)) })]
-    #[case("-", AstNode::Sub { left: Box::new(AstNode::IntLit(1)), right: Box::new(AstNode::IntLit(2)) })]
-    #[case("*", AstNode::Mul { left: Box::new(AstNode::IntLit(1)), right: Box::new(AstNode::IntLit(2)) })]
-    #[case("/", AstNode::Div { left: Box::new(AstNode::IntLit(1)), right: Box::new(AstNode::IntLit(2)) })]
-    #[case("%", AstNode::Mod { left: Box::new(AstNode::IntLit(1)), right: Box::new(AstNode::IntLit(2)) })]
-    #[case("^", AstNode::Pow { left: Box::new(AstNode::IntLit(1)), right: Box::new(AstNode::IntLit(2)) })]
-    #[case("==", AstNode::Eql { left: Box::new(AstNode::IntLit(1)), right: Box::new(AstNode::IntLit(2)) })]
-    #[case("!=", AstNode::Neq { left: Box::new(AstNode::IntLit(1)), right: Box::new(AstNode::IntLit(2)) })]
-    #[case("<", AstNode::Lss { left: Box::new(AstNode::IntLit(1)), right: Box::new(AstNode::IntLit(2)) })]
-    #[case("<=", AstNode::Lte { left: Box::new(AstNode::IntLit(1)), right: Box::new(AstNode::IntLit(2)) })]
-    #[case(">", AstNode::Grt { left: Box::new(AstNode::IntLit(1)), right: Box::new(AstNode::IntLit(2)) })]
-    #[case(">=", AstNode::Gte { left: Box::new(AstNode::IntLit(1)), right: Box::new(AstNode::IntLit(2)) })]
-    #[case("&&", AstNode::And { left: Box::new(AstNode::BoolVal(true)), right: Box::new(AstNode::BoolVal(false)) })]
-    #[case("||", AstNode::Or { left: Box::new(AstNode::BoolVal(true)), right: Box::new(AstNode::BoolVal(false)) })]
+    #[case("+", AstNode::make_binary(Token::at(TokenKind::Plus, Pos::at(1, 1)), AstNode::Expr(ExprKind::IntLit(1)), AstNode::Expr(ExprKind::IntLit(2))))]
+    #[case("-", AstNode::make_binary(Token::at(TokenKind::Minus, Pos::at(1, 1)), AstNode::Expr(ExprKind::IntLit(1)), AstNode::Expr(ExprKind::IntLit(2))))]
+    #[case("*", AstNode::make_binary(Token::at(TokenKind::Star, Pos::at(1, 1)), AstNode::Expr(ExprKind::IntLit(1)), AstNode::Expr(ExprKind::IntLit(2))))]
+    #[case("/", AstNode::make_binary(Token::at(TokenKind::Slash, Pos::at(1, 1)), AstNode::Expr(ExprKind::IntLit(1)), AstNode::Expr(ExprKind::IntLit(2))))]
+    #[case("%", AstNode::make_binary(Token::at(TokenKind::Mod, Pos::at(1, 1)), AstNode::Expr(ExprKind::IntLit(1)), AstNode::Expr(ExprKind::IntLit(2))))]
+    #[case("^", AstNode::make_binary(Token::at(TokenKind::Caret, Pos::at(1, 1)), AstNode::Expr(ExprKind::IntLit(1)), AstNode::Expr(ExprKind::IntLit(2))))]
+    #[case("==", AstNode::make_binary(Token::at(TokenKind::Eql, Pos::at(1, 1)), AstNode::Expr(ExprKind::IntLit(1)), AstNode::Expr(ExprKind::IntLit(2))))]
+    #[case("!=", AstNode::make_binary(Token::at(TokenKind::Neq, Pos::at(1, 1)), AstNode::Expr(ExprKind::IntLit(1)), AstNode::Expr(ExprKind::IntLit(2))))]
+    #[case("<", AstNode::make_binary(Token::at(TokenKind::Lss, Pos::at(1, 1)), AstNode::Expr(ExprKind::IntLit(1)), AstNode::Expr(ExprKind::IntLit(2))))]
+    #[case("<=", AstNode::make_binary(Token::at(TokenKind::Leq, Pos::at(1, 1)), AstNode::Expr(ExprKind::IntLit(1)), AstNode::Expr(ExprKind::IntLit(2))))]
+    #[case(">", AstNode::make_binary(Token::at(TokenKind::Gtr, Pos::at(1, 1)), AstNode::Expr(ExprKind::IntLit(1)), AstNode::Expr(ExprKind::IntLit(2))))]
+    #[case(">=", AstNode::make_binary(Token::at(TokenKind::Geq, Pos::at(1, 1)), AstNode::Expr(ExprKind::IntLit(1)), AstNode::Expr(ExprKind::IntLit(2))))]
+    #[case("&&", AstNode::make_binary(Token::at(TokenKind::And, Pos::at(1, 1)), AstNode::Expr(ExprKind::BoolVal(true)), AstNode::Expr(ExprKind::BoolVal(false))))]
+    #[case("||", AstNode::make_binary(Token::at(TokenKind::Or, Pos::at(1, 1)), AstNode::Expr(ExprKind::BoolVal(true)), AstNode::Expr(ExprKind::BoolVal(false))))]
     fn binary_ops(#[case] op: &str, #[case] expected: AstNode) {
         let input = format!("1 {} 2", op);
         let input_bool = format!("true {} false", op);
@@ -558,13 +563,11 @@ mod tests {
     fn prec_add_mul() {
         assert_eq!(
             parse("1 + 2 * 3"),
-            AstNode::Add {
-                left: Box::new(AstNode::IntLit(1)),
-                right: Box::new(AstNode::Mul {
-                    left: Box::new(AstNode::IntLit(2)),
-                    right: Box::new(AstNode::IntLit(3)),
-                }),
-            }
+            AstNode::make_binary(TokenKind::Plus.into(),
+                                 AstNode::Expr(ExprKind::IntLit(1)),
+                                 AstNode::make_binary(TokenKind::Star.into(),
+                                                      AstNode::Expr(ExprKind::IntLit(2)),
+                                                      AstNode::Expr(ExprKind::IntLit(3))))
         );
     }
 
@@ -572,13 +575,11 @@ mod tests {
     fn prec_mul_add() {
         assert_eq!(
             parse("1 * 2 + 3"),
-            AstNode::Add {
-                left: Box::new(AstNode::Mul {
-                    left: Box::new(AstNode::IntLit(1)),
-                    right: Box::new(AstNode::IntLit(2)),
-                }),
-                right: Box::new(AstNode::IntLit(3)),
-            }
+            AstNode::make_binary(TokenKind::Plus.into(),
+                                 AstNode::make_binary(TokenKind::Star.into(),
+                                                      AstNode::Expr(ExprKind::IntLit(1)),
+                                                      AstNode::Expr(ExprKind::IntLit(2))),
+                                 AstNode::Expr(ExprKind::IntLit(3))),
         );
     }
 
@@ -586,10 +587,9 @@ mod tests {
     fn prec_unary_minus_add() {
         assert_eq!(
             parse("-1 + 2"),
-            AstNode::Add {
-                left: Box::new(AstNode::Minus(Box::new(AstNode::IntLit(1)))),
-                right: Box::new(AstNode::IntLit(2)),
-            }
+            AstNode::make_binary(TokenKind::Plus.into(),
+                                 AstNode::make_minus(AstNode::Expr(ExprKind::IntLit(1))),
+                                 AstNode::Expr(ExprKind::IntLit(2)))
         );
     }
 
@@ -597,10 +597,9 @@ mod tests {
     fn prec_not_eq() {
         assert_eq!(
             parse("!true == false"),
-            AstNode::Eql {
-                left: Box::new(AstNode::Not(Box::new(AstNode::BoolVal(true)))),
-                right: Box::new(AstNode::BoolVal(false)),
-            }
+            AstNode::make_binary(TokenKind::Eql.into(),
+                AstNode::make_not(AstNode::Expr(ExprKind::BoolVal(true))),
+                AstNode::Expr(ExprKind::BoolVal(false)))
         );
     }
 
@@ -609,13 +608,11 @@ mod tests {
         // '^' has highest precedence (60), so 1 ^ 2 + 3 -> (1 ^ 2) + 3
         assert_eq!(
             parse("1 ^ 2 + 3"),
-            AstNode::Add {
-                left: Box::new(AstNode::Pow {
-                    left: Box::new(AstNode::IntLit(1)),
-                    right: Box::new(AstNode::IntLit(2)),
-                }),
-                right: Box::new(AstNode::IntLit(3)),
-            }
+            AstNode::make_binary(TokenKind::Plus.into(),
+                AstNode::make_binary(TokenKind::Caret.into(),
+                    AstNode::Expr(ExprKind::IntLit(1)),
+                    AstNode::Expr(ExprKind::IntLit(2))),
+                AstNode::Expr(ExprKind::IntLit(3))),
         );
     }
 
@@ -623,13 +620,11 @@ mod tests {
     fn left_assoc_add() {
         assert_eq!(
             parse("1 + 2 + 3"),
-            AstNode::Add {
-                left: Box::new(AstNode::Add {
-                    left: Box::new(AstNode::IntLit(1)),
-                    right: Box::new(AstNode::IntLit(2)),
-                }),
-                right: Box::new(AstNode::IntLit(3)),
-            }
+            AstNode::make_binary(TokenKind::Plus.into(),
+                AstNode::make_binary(TokenKind::Plus.into(),
+                    AstNode::Expr(ExprKind::IntLit(1)),
+                    AstNode::Expr(ExprKind::IntLit(2))),
+                AstNode::Expr(ExprKind::IntLit(3)))
         );
     }
 
@@ -637,13 +632,11 @@ mod tests {
     fn left_assoc_mul() {
         assert_eq!(
             parse("1 * 2 * 3"),
-            AstNode::Mul {
-                left: Box::new(AstNode::Mul {
-                    left: Box::new(AstNode::IntLit(1)),
-                    right: Box::new(AstNode::IntLit(2)),
-                }),
-                right: Box::new(AstNode::IntLit(3)),
-            }
+            AstNode::make_binary(TokenKind::Star.into(),
+                AstNode::make_binary(TokenKind::Star.into(),
+                    AstNode::Expr(ExprKind::IntLit(1)),
+                    AstNode::Expr(ExprKind::IntLit(2))),
+                AstNode::Expr(ExprKind::IntLit(3))),
         );
     }
 
@@ -651,13 +644,11 @@ mod tests {
     fn left_assoc_compare() {
         assert_eq!(
             parse("1 < 2 < 3"),
-            AstNode::Lss {
-                left: Box::new(AstNode::Lss {
-                    left: Box::new(AstNode::IntLit(1)),
-                    right: Box::new(AstNode::IntLit(2)),
-                }),
-                right: Box::new(AstNode::IntLit(3)),
-            }
+            AstNode::make_binary(TokenKind::Lss.into(),
+                AstNode::make_binary(TokenKind::Lss.into(),
+                    AstNode::Expr(ExprKind::IntLit(1)),
+                    AstNode::Expr(ExprKind::IntLit(2))),
+                AstNode::Expr(ExprKind::IntLit(3))),
         );
     }
 
@@ -665,16 +656,13 @@ mod tests {
     fn mixed_prec_complex() {
         assert_eq!(
             parse("-1 + 2 * 3 ^ 4"),
-            AstNode::Add {
-                left: Box::new(AstNode::Minus(Box::new(AstNode::IntLit(1)))),
-                right: Box::new(AstNode::Mul {
-                    left: Box::new(AstNode::IntLit(2)),
-                    right: Box::new(AstNode::Pow {
-                        left: Box::new(AstNode::IntLit(3)),
-                        right: Box::new(AstNode::IntLit(4)),
-                    }),
-                }),
-            }
+            AstNode::make_binary(TokenKind::Plus.into(),
+                AstNode::make_minus(AstNode::Expr(ExprKind::IntLit(1))),
+                AstNode::make_binary(TokenKind::Star.into(),
+                    AstNode::Expr(ExprKind::IntLit(2)),
+                    AstNode::make_binary(TokenKind::Caret.into(),
+                        AstNode::Expr(ExprKind::IntLit(3)),
+                        AstNode::Expr(ExprKind::IntLit(4)))))
         );
     }
 
@@ -683,15 +671,15 @@ mod tests {
     #[test]
     fn func_call_no_args() {
         let result = parse("foo()");
-        assert!(matches!(result, AstNode::FuncCall { id: _, params } if params.is_empty()));
+        assert!(matches!(result, AstNode::Expr(ExprKind::FuncCall { id: _, params }) if params.is_empty()));
     }
 
     #[test]
     fn func_call_one_arg() {
         let result = parse("foo(42)");
         match result {
-            AstNode::FuncCall { id: _, params } => {
-                assert_eq!(params, vec![AstNode::IntLit(42)]);
+            AstNode::Expr(ExprKind::FuncCall { id: _, params }) => {
+                assert_eq!(params, vec![AstNode::Expr(ExprKind::IntLit(42))]);
             }
             _ => panic!("expected FuncCall"),
         }
@@ -701,11 +689,11 @@ mod tests {
     fn func_call_multiple_args() {
         let result = parse("foo(1, 2, 3)");
         match result {
-            AstNode::FuncCall { id: _, params } => {
+            AstNode::Expr(ExprKind::FuncCall { id: _, params }) => {
                 assert_eq!(params, vec![
-                    AstNode::IntLit(1),
-                    AstNode::IntLit(2),
-                    AstNode::IntLit(3),
+                    AstNode::Expr(ExprKind::IntLit(1)),
+                    AstNode::Expr(ExprKind::IntLit(2)),
+                    AstNode::Expr(ExprKind::IntLit(3)),
                 ]);
             }
             _ => panic!("expected FuncCall"),
@@ -716,9 +704,9 @@ mod tests {
     fn func_call_nested() {
         let result = parse("foo(bar())");
         match result {
-            AstNode::FuncCall { id: _, params } => {
+            AstNode::Expr(ExprKind::FuncCall { id: _, params }) => {
                 assert_eq!(params.len(), 1);
-                assert!(matches!(params[0], AstNode::FuncCall { id: _, ref params } if params.is_empty()));
+                assert!(matches!(params[0], AstNode::Expr(ExprKind::FuncCall { id: _, ref params }) if params.is_empty()));
             }
             _ => panic!("expected FuncCall"),
         }
@@ -728,15 +716,13 @@ mod tests {
     fn func_call_arg_with_expr() {
         let result = parse("foo(1 + 2)");
         match result {
-            AstNode::FuncCall { id: _, params } => {
+            AstNode::Expr(ExprKind::FuncCall { id: _, params }) => {
                 assert_eq!(params.len(), 1);
                 assert_eq!(
                     params[0],
-                    AstNode::Add {
-                        left: Box::new(AstNode::IntLit(1)),
-                        right: Box::new(AstNode::IntLit(2)),
-                    }
-                );
+                    AstNode::make_binary(TokenKind::Plus.into(),
+                        AstNode::Expr(ExprKind::IntLit(1)),
+                        AstNode::Expr(ExprKind::IntLit(2))))
             }
             _ => panic!("expected FuncCall"),
         }
@@ -748,8 +734,8 @@ mod tests {
     fn subscript_zero() {
         let result = parse("arr[0]");
         match result {
-            AstNode::Subscript { id: _, index } => {
-                assert_eq!(*index, AstNode::IntLit(0));
+            AstNode::Expr(ExprKind::Subscript { index, .. }) => {
+                assert_eq!(*index, AstNode::Expr(ExprKind::IntLit(0)));
             }
             _ => panic!("expected Subscript"),
         }
@@ -759,8 +745,8 @@ mod tests {
     fn subscript_with_expr() {
         let result = parse("arr[i + 1]");
         match result {
-            AstNode::Subscript { id: _, index } => {
-                assert!(matches!(*index, AstNode::Add { .. }));
+            AstNode::Expr(ExprKind::Subscript { index, .. }) => {
+                assert!(matches!(*index, AstNode::Expr(ExprKind::Binary { op: BinaryOp::Add, .. })))
             }
             _ => panic!("expected Subscript"),
         }
@@ -773,7 +759,7 @@ mod tests {
         // parse_expression with min_bp=50 should stop before '+'
         // So "1 + 2" parsed with min_bp=50 returns just IntLit(1)
         let mut p = parser("1 + 2");
-        assert_eq!(p.parse_expression(50), AstNode::IntLit(1));
+        assert_eq!(p.parse_expression(50), AstNode::Expr(ExprKind::IntLit(1)));
     }
 
     #[test]
@@ -782,10 +768,9 @@ mod tests {
         let mut p = parser("1 + 2");
         assert_eq!(
             p.parse_expression(0),
-            AstNode::Add {
-                left: Box::new(AstNode::IntLit(1)),
-                right: Box::new(AstNode::IntLit(2)),
-            }
+            AstNode::make_binary(TokenKind::Plus.into(),
+                AstNode::Expr(ExprKind::IntLit(1)),
+                AstNode::Expr(ExprKind::IntLit(2))),
         );
     }
 
@@ -950,7 +935,7 @@ mod tests {
             AstNode::VarDecl {
                 id: 0,
                 dtype: Type::Scalar(PrimType::Int),
-                init: Some(Box::new(AstNode::IntLit(42))),
+                init: Some(Box::new(AstNode::Expr(ExprKind::IntLit(42)))),
             }
         );
     }
@@ -962,7 +947,7 @@ mod tests {
             AstNode::VarDecl {
                 id: 0,
                 dtype: Type::Scalar(PrimType::Char),
-                init: Some(Box::new(AstNode::CharLit('a'))),
+                init: Some(Box::new(AstNode::Expr(ExprKind::CharLit('a')))),
             }
         );
     }
@@ -974,7 +959,7 @@ mod tests {
             AstNode::VarDecl {
                 id: 0,
                 dtype: Type::Scalar(PrimType::Bool),
-                init: Some(Box::new(AstNode::BoolVal(true))),
+                init: Some(Box::new(AstNode::Expr(ExprKind::BoolVal(true)))),
             }
         );
     }
@@ -986,7 +971,7 @@ mod tests {
             AstNode::VarDecl {
                 id: 0,
                 dtype: Type::Scalar(PrimType::Bool),
-                init: Some(Box::new(AstNode::BoolVal(false))),
+                init: Some(Box::new(AstNode::Expr(ExprKind::BoolVal(false)))),
             }
         );
     }
@@ -996,7 +981,7 @@ mod tests {
         let result = parse_decl("x: string = \"hello\";");
         match result {
             AstNode::VarDecl { id: 0, dtype: Type::Scalar(PrimType::String), init: Some(init) } => {
-                assert!(matches!(*init, AstNode::StringLit(_)));
+                assert!(matches!(*init, AstNode::Expr(ExprKind::StringLit(_))));
             }
             _ => panic!("expected VarDecl with StringLit init"),
         }
@@ -1022,7 +1007,7 @@ mod tests {
             AstNode::VarDecl {
                 id: 0,
                 dtype: Type::make_array(3, Type::Scalar(PrimType::Int)),
-                init: Some(Box::new(AstNode::ArrayInitializer(vec![AstNode::IntLit(42), AstNode::IntLit(20)]))),
+                init: Some(Box::new(AstNode::ArrayInitializer(vec![AstNode::Expr(ExprKind::IntLit(42)), AstNode::Expr(ExprKind::IntLit(20))]))),
             }
         );
     }
@@ -1287,7 +1272,7 @@ mod tests {
                 AstNode::VarDecl {
                     id: 0,
                     dtype: Type::Scalar(PrimType::Int),
-                    init: Some(Box::new(AstNode::IntLit(42))),
+                    init: Some(Box::new(AstNode::Expr(ExprKind::IntLit(42)))),
                 }
             ])
         );
@@ -1301,7 +1286,7 @@ mod tests {
                 AstNode::VarDecl {
                     id: 0,
                     dtype: Type::Scalar(PrimType::Bool),
-                    init: Some(Box::new(AstNode::BoolVal(true))),
+                    init: Some(Box::new(AstNode::Expr(ExprKind::BoolVal(true)))),
                 }
             ])
         );
@@ -1315,7 +1300,7 @@ mod tests {
                 AstNode::VarDecl {
                     id: 0,
                     dtype: Type::Scalar(PrimType::Char),
-                    init: Some(Box::new(AstNode::CharLit('a'))),
+                    init: Some(Box::new(AstNode::Expr(ExprKind::CharLit('a')))),
                 }
             ])
         );
@@ -1328,7 +1313,7 @@ mod tests {
             AstNode::Block(stmts) if stmts.len() == 1 => {
                 match &stmts[0] {
                     AstNode::VarDecl { id: 0, dtype: Type::Scalar(PrimType::String), init: Some(v) }
-                        if matches!(**v, AstNode::StringLit(_)) => {},
+                        if matches!(**v, AstNode::Expr(ExprKind::StringLit(_))) => {},
                     _ => panic!("expected VarDecl with StringLit"),
                 }
             }
@@ -1345,9 +1330,9 @@ mod tests {
                     id: 0,
                     dtype: Type::make_array(3, Type::Scalar(PrimType::Int)),
                     init: Some(Box::new(AstNode::ArrayInitializer(vec![
-                        AstNode::IntLit(1),
-                        AstNode::IntLit(2),
-                        AstNode::IntLit(3),
+                        AstNode::Expr(ExprKind::IntLit(1)),
+                        AstNode::Expr(ExprKind::IntLit(2)),
+                        AstNode::Expr(ExprKind::IntLit(3)),
                     ]))),
                 }
             ])
@@ -1363,8 +1348,8 @@ mod tests {
                     id: 0,
                     dtype: Type::make_array(2, Type::make_array(3, Type::Scalar(PrimType::Char))),
                     init: Some(Box::new(AstNode::ArrayInitializer(vec![
-                        AstNode::CharLit('a'),
-                        AstNode::CharLit('b'),
+                        AstNode::Expr(ExprKind::CharLit('a')),
+                        AstNode::Expr(ExprKind::CharLit('b')),
                     ]))),
                 }
             ])
@@ -1379,12 +1364,12 @@ mod tests {
                 AstNode::VarDecl {
                     id: 0,
                     dtype: Type::Scalar(PrimType::Int),
-                    init: Some(Box::new(AstNode::IntLit(1))),
+                    init: Some(Box::new(AstNode::Expr(ExprKind::IntLit(1)))),
                 },
                 AstNode::VarDecl {
                     id: 1,
                     dtype: Type::Scalar(PrimType::Bool),
-                    init: Some(Box::new(AstNode::BoolVal(false))),
+                    init: Some(Box::new(AstNode::Expr(ExprKind::BoolVal(false)))),
                 },
             ])
         );
@@ -1399,7 +1384,7 @@ mod tests {
                     AstNode::VarDecl {
                         id: 0,
                         dtype: Type::Scalar(PrimType::Int),
-                        init: Some(Box::new(AstNode::IntLit(5))),
+                        init: Some(Box::new(AstNode::Expr(ExprKind::IntLit(5)))),
                     }
                 ])
             ])
@@ -1415,7 +1400,7 @@ mod tests {
             AstNode::Block(vec![
                 AstNode::Assignment {
                     lvalue: 0,
-                    expr: Box::new(AstNode::IntLit(42)),
+                    expr: Box::new(AstNode::Expr(ExprKind::IntLit(42))),
                 }
             ])
         );
@@ -1426,13 +1411,10 @@ mod tests {
         assert_eq!(
             parse_block("{x = 1 + 2;}"),
             AstNode::Block(vec![
-                AstNode::Assignment {
-                    lvalue: 0,
-                    expr: Box::new(AstNode::Add {
-                        left: Box::new(AstNode::IntLit(1)),
-                        right: Box::new(AstNode::IntLit(2)),
-                    }),
-                }
+                AstNode::make_assignment(0,
+                    AstNode::make_binary(TokenKind::Plus.into(),
+                        AstNode::Expr(ExprKind::IntLit(1)),
+                        AstNode::Expr(ExprKind::IntLit(2)))),
             ])
         );
     }
@@ -1444,7 +1426,7 @@ mod tests {
             AstNode::Block(vec![
                 AstNode::Assignment {
                     lvalue: 0,
-                    expr: Box::new(AstNode::BoolVal(true)),
+                    expr: Box::new(AstNode::Expr(ExprKind::BoolVal(true))),
                 }
             ])
         );
@@ -1457,7 +1439,7 @@ mod tests {
             AstNode::Block(vec![
                 AstNode::Assignment {
                     lvalue: 0,
-                    expr: Box::new(AstNode::CharLit('a')),
+                    expr: Box::new(AstNode::Expr(ExprKind::CharLit('a'))),
                 }
             ])
         );
@@ -1469,7 +1451,7 @@ mod tests {
         match result {
             AstNode::Block(stmts) if stmts.len() == 1 => {
                 match &stmts[0] {
-                    AstNode::Assignment { lvalue: 0, expr } if matches!(**expr, AstNode::StringLit(_)) => {},
+                    AstNode::Assignment { lvalue: 0, expr } if matches!(**expr, AstNode::Expr(ExprKind::StringLit(_))) => {},
                     _ => panic!("expected Assignment with StringLit"),
                 }
             }
@@ -1482,10 +1464,8 @@ mod tests {
         assert_eq!(
             parse_block("{x = -5;}"),
             AstNode::Block(vec![
-                AstNode::Assignment {
-                    lvalue: 0,
-                    expr: Box::new(AstNode::Minus(Box::new(AstNode::IntLit(5)))),
-                }
+                AstNode::make_assignment(0,
+                    AstNode::make_minus(AstNode::Expr(ExprKind::IntLit(5)))),
             ])
         );
     }
@@ -1495,10 +1475,8 @@ mod tests {
         assert_eq!(
             parse_block("{x = !true;}"),
             AstNode::Block(vec![
-                AstNode::Assignment {
-                    lvalue: 0,
-                    expr: Box::new(AstNode::Not(Box::new(AstNode::BoolVal(true)))),
-                }
+                AstNode::make_assignment(0,
+                    AstNode::make_not(AstNode::Expr(ExprKind::BoolVal(true)))),
             ])
         );
     }
@@ -1510,7 +1488,7 @@ mod tests {
             AstNode::Block(stmts) if stmts.len() == 1 => {
                 match &stmts[0] {
                     AstNode::Assignment { lvalue: 0, expr } => {
-                        assert!(matches!(**expr, AstNode::FuncCall { .. }));
+                        assert!(matches!(**expr, AstNode::Expr(ExprKind::FuncCall { .. })));
                     }
                     _ => panic!("expected Assignment with FuncCall"),
                 }
@@ -1526,8 +1504,8 @@ mod tests {
             AstNode::Block(stmts) if stmts.len() == 1 => {
                 match &stmts[0] {
                     AstNode::Assignment { lvalue: 0, expr } => {
-                        assert!(matches!(**expr, AstNode::Subscript { .. }));
-                    }
+                        assert!(matches!(**expr, AstNode::Expr(ExprKind::Subscript { .. })));
+                    },
                     _ => panic!("expected Assignment with Subscript"),
                 }
             }
@@ -1542,7 +1520,7 @@ mod tests {
             AstNode::Block(vec![
                 AstNode::Assignment {
                     lvalue: 0,
-                    expr: Box::new(AstNode::IntLit(42)),
+                    expr: Box::new(AstNode::Expr(ExprKind::IntLit(42))),
                 }
             ])
         );
@@ -1555,11 +1533,11 @@ mod tests {
             AstNode::Block(vec![
                 AstNode::Assignment {
                     lvalue: 0,
-                    expr: Box::new(AstNode::IntLit(1)),
+                    expr: Box::new(AstNode::Expr(ExprKind::IntLit(1))),
                 },
                 AstNode::Assignment {
                     lvalue: 1,
-                    expr: Box::new(AstNode::IntLit(2)),
+                    expr: Box::new(AstNode::Expr(ExprKind::IntLit(2))),
                 },
             ])
         );
@@ -1573,7 +1551,7 @@ mod tests {
                 AstNode::VarDecl {
                     id: 0,
                     dtype: Type::Scalar(PrimType::Int),
-                    init: Some(Box::new(AstNode::IntLit(1))),
+                    init: Some(Box::new(AstNode::Expr(ExprKind::IntLit(1)))),
                 },
                 AstNode::Assignment {
                     lvalue: 1,
@@ -1591,7 +1569,7 @@ mod tests {
                 AstNode::Block(vec![
                     AstNode::Assignment {
                         lvalue: 0,
-                        expr: Box::new(AstNode::IntLit(42)),
+                        expr: Box::new(AstNode::Expr(ExprKind::IntLit(42))),
                     }
                 ])
             ])
@@ -1630,11 +1608,11 @@ mod tests {
             parse_block("{if (true) { x = 1; }}"),
             AstNode::Block(vec![
                 AstNode::If {
-                    cond: Box::new(AstNode::BoolVal(true)),
+                    cond: Box::new(AstNode::Expr(ExprKind::BoolVal(true))),
                     t_branch: Box::new(AstNode::Block(vec![
                         AstNode::Assignment {
                             lvalue: 0,
-                            expr: Box::new(AstNode::IntLit(1)),
+                            expr: Box::new(AstNode::Expr(ExprKind::IntLit(1))),
                         }
                     ])),
                     f_branch: Box::new(AstNode::EmptyBlock),
@@ -1649,17 +1627,17 @@ mod tests {
             parse_block("{if (true) { x = 1; } else { y = 2; }}"),
             AstNode::Block(vec![
                 AstNode::If {
-                    cond: Box::new(AstNode::BoolVal(true)),
+                    cond: Box::new(AstNode::Expr(ExprKind::BoolVal(true))),
                     t_branch: Box::new(AstNode::Block(vec![
                         AstNode::Assignment {
                             lvalue: 0,
-                            expr: Box::new(AstNode::IntLit(1)),
+                            expr: Box::new(AstNode::Expr(ExprKind::IntLit(1))),
                         }
                     ])),
                     f_branch: Box::new(AstNode::Block(vec![
                         AstNode::Assignment {
                             lvalue: 1,
-                            expr: Box::new(AstNode::IntLit(2)),
+                            expr: Box::new(AstNode::Expr(ExprKind::IntLit(2))),
                         }
                     ])),
                 }
@@ -1672,19 +1650,15 @@ mod tests {
         assert_eq!(
             parse_block("{if (1 + 2) { x = 1; }}"),
             AstNode::Block(vec![
-                AstNode::If {
-                    cond: Box::new(AstNode::Add {
-                        left: Box::new(AstNode::IntLit(1)),
-                        right: Box::new(AstNode::IntLit(2)),
-                    }),
-                    t_branch: Box::new(AstNode::Block(vec![
-                        AstNode::Assignment {
-                            lvalue: 0,
-                            expr: Box::new(AstNode::IntLit(1)),
-                        }
-                    ])),
-                    f_branch: Box::new(AstNode::EmptyBlock),
-                }
+                AstNode::make_if(
+                    AstNode::make_binary(TokenKind::Plus.into(),
+                        AstNode::Expr(ExprKind::IntLit(1)),
+                        AstNode::Expr(ExprKind::IntLit(2))),
+                    AstNode::Block(vec![
+                        AstNode::make_assignment(0, AstNode::Expr(ExprKind::IntLit(1))),
+                        ]),
+                    AstNode::EmptyBlock,
+                ),
             ])
         );
     }
@@ -1700,7 +1674,7 @@ mod tests {
                         AstNode::VarDecl {
                             id: 1,
                             dtype: Type::Scalar(PrimType::Int),
-                            init: Some(Box::new(AstNode::IntLit(42))),
+                            init: Some(Box::new(AstNode::Expr(ExprKind::IntLit(42)))),
                         }
                     ])),
                     f_branch: Box::new(AstNode::EmptyBlock),
@@ -1719,7 +1693,7 @@ mod tests {
                     t_branch: Box::new(AstNode::Block(vec![
                         AstNode::Assignment {
                             lvalue: 1,
-                            expr: Box::new(AstNode::IntLit(1)),
+                            expr: Box::new(AstNode::Expr(ExprKind::IntLit(1))),
                         }
                     ])),
                     f_branch: Box::new(AstNode::Block(vec![
@@ -1728,7 +1702,7 @@ mod tests {
                             t_branch: Box::new(AstNode::Block(vec![
                                 AstNode::Assignment {
                                     lvalue: 3,
-                                    expr: Box::new(AstNode::IntLit(2)),
+                                    expr: Box::new(AstNode::Expr(ExprKind::IntLit(2))),
                                 }
                             ])),
                             f_branch: Box::new(AstNode::EmptyBlock),
@@ -1767,7 +1741,7 @@ mod tests {
             parse_for_stmt("{for (; true;) {}}"),
             AstNode::For {
                 assign: vec![],
-                cond: Box::new(AstNode::BoolVal(true)),
+                cond: Box::new(AstNode::Expr(ExprKind::BoolVal(true))),
                 post_op: vec![],
                 body: Box::new(AstNode::EmptyBlock),
             }
@@ -1782,10 +1756,10 @@ mod tests {
                 assign: vec![
                     AstNode::Assignment {
                         lvalue: 0,
-                        expr: Box::new(AstNode::IntLit(0)),
+                        expr: Box::new(AstNode::Expr(ExprKind::IntLit(0))),
                     }
                 ],
-                cond: Box::new(AstNode::BoolVal(true)),
+                cond: Box::new(AstNode::Expr(ExprKind::BoolVal(true))),
                 post_op: vec![],
                 body: Box::new(AstNode::EmptyBlock),
             }
@@ -1800,14 +1774,14 @@ mod tests {
                 assign: vec![
                     AstNode::Assignment {
                         lvalue: 0,
-                        expr: Box::new(AstNode::IntLit(0)),
+                        expr: Box::new(AstNode::Expr(ExprKind::IntLit(0))),
                     },
                     AstNode::Assignment {
                         lvalue: 1,
-                        expr: Box::new(AstNode::IntLit(1)),
+                        expr: Box::new(AstNode::Expr(ExprKind::IntLit(1))),
                     }
                 ],
-                cond: Box::new(AstNode::BoolVal(true)),
+                cond: Box::new(AstNode::Expr(ExprKind::BoolVal(true))),
                 post_op: vec![],
                 body: Box::new(AstNode::EmptyBlock),
             }
@@ -1818,15 +1792,11 @@ mod tests {
     fn for_with_cond() {
         assert_eq!(
             parse_for_stmt("{for (; a < b;) {}}"),
-            AstNode::For {
-                assign: vec![],
-                cond: Box::new(AstNode::Lss {
-                    left: Box::new(AstNode::Ident(0)),
-                    right: Box::new(AstNode::Ident(1)),
-                }),
-                post_op: vec![],
-                body: Box::new(AstNode::EmptyBlock),
-            }
+            AstNode::make_for(
+                vec![],
+                AstNode::make_binary(TokenKind::Lss.into(), AstNode::Ident(0), AstNode::Ident(1)),
+                vec![],
+                AstNode::EmptyBlock),
         );
     }
 
@@ -1836,8 +1806,8 @@ mod tests {
             parse_for_stmt("{for (; true; i++) {}}"),
             AstNode::For {
                 assign: vec![],
-                cond: Box::new(AstNode::BoolVal(true)),
-                post_op: vec![AstNode::Incr(0)],
+                cond: Box::new(AstNode::Expr(ExprKind::BoolVal(true))),
+                post_op: vec![AstNode::Expr(ExprKind::Incr(0))],
                 body: Box::new(AstNode::EmptyBlock),
             }
         );
@@ -1849,8 +1819,8 @@ mod tests {
             parse_for_stmt("{for (; true; i--) {}}"),
             AstNode::For {
                 assign: vec![],
-                cond: Box::new(AstNode::BoolVal(true)),
-                post_op: vec![AstNode::Decr(0)],
+                cond: Box::new(AstNode::Expr(ExprKind::BoolVal(true))),
+                post_op: vec![AstNode::Expr(ExprKind::Decr(0))],
                 body: Box::new(AstNode::EmptyBlock),
             }
         );
@@ -1862,8 +1832,8 @@ mod tests {
             parse_for_stmt("{for (; true; i++, j--) {}}"),
             AstNode::For {
                 assign: vec![],
-                cond: Box::new(AstNode::BoolVal(true)),
-                post_op: vec![AstNode::Incr(0), AstNode::Decr(1)],
+                cond: Box::new(AstNode::Expr(ExprKind::BoolVal(true))),
+                post_op: vec![AstNode::Expr(ExprKind::Incr(0)), AstNode::Expr(ExprKind::Decr(1))],
                 body: Box::new(AstNode::EmptyBlock),
             }
         );
@@ -1873,28 +1843,18 @@ mod tests {
     fn for_full() {
         assert_eq!(
             parse_for_stmt("{for (x = 0; x < 10; x++) { x = x * 2; }}"),
-            AstNode::For {
-                assign: vec![
-                    AstNode::Assignment {
-                        lvalue: 0,
-                        expr: Box::new(AstNode::IntLit(0)),
-                    }
-                ],
-                cond: Box::new(AstNode::Lss {
-                    left: Box::new(AstNode::Ident(0)),
-                    right: Box::new(AstNode::IntLit(10)),
-                }),
-                post_op: vec![AstNode::Incr(0)],
-                body: Box::new(AstNode::Block(vec![
-                    AstNode::Assignment {
-                        lvalue: 0,
-                        expr: Box::new(AstNode::Mul {
-                            left: Box::new(AstNode::Ident(0)),
-                            right: Box::new(AstNode::IntLit(2)),
-                        }),
-                    }
+            AstNode::make_for(
+                vec![AstNode::make_assignment(0, AstNode::Expr(ExprKind::IntLit(0)))],
+                AstNode::make_binary(TokenKind::Lss.into(),
+                    AstNode::Ident(0),
+                    AstNode::Expr(ExprKind::IntLit(10))),
+                vec![AstNode::Expr(ExprKind::Incr(0))],
+                AstNode::Block(vec![
+                    AstNode::make_assignment(0,
+                        AstNode::make_binary(TokenKind::Star.into(),
+                            AstNode::Ident(0),
+                            AstNode::Expr(ExprKind::IntLit(2)))),
                 ])),
-            }
         );
     }
 
@@ -1904,13 +1864,13 @@ mod tests {
             parse_for_stmt("{for (; true;) { x: integer = 42; y = x; }}"),
             AstNode::For {
                 assign: vec![],
-                cond: Box::new(AstNode::BoolVal(true)),
+                cond: Box::new(AstNode::Expr(ExprKind::BoolVal(true))),
                 post_op: vec![],
                 body: Box::new(AstNode::Block(vec![
                     AstNode::VarDecl {
                         id: 0,
                         dtype: Type::Scalar(PrimType::Int),
-                        init: Some(Box::new(AstNode::IntLit(42))),
+                        init: Some(Box::new(AstNode::Expr(ExprKind::IntLit(42)))),
                     },
                     AstNode::Assignment {
                         lvalue: 1,
@@ -1927,12 +1887,12 @@ mod tests {
             parse_for_stmt("{for (; true;) { for (; true;) {} }}"),
             AstNode::For {
                 assign: vec![],
-                cond: Box::new(AstNode::BoolVal(true)),
+                cond: Box::new(AstNode::Expr(ExprKind::BoolVal(true))),
                 post_op: vec![],
                 body: Box::new(AstNode::Block(vec![
                     AstNode::For {
                         assign: vec![],
-                        cond: Box::new(AstNode::BoolVal(true)),
+                        cond: Box::new(AstNode::Expr(ExprKind::BoolVal(true))),
                         post_op: vec![],
                         body: Box::new(AstNode::EmptyBlock),
                     }
@@ -2011,7 +1971,7 @@ mod tests {
                 AstNode::VarDecl {
                     id: 1,
                     dtype: Type::Scalar(PrimType::Int),
-                    init: Some(Box::new(AstNode::IntLit(42))),
+                    init: Some(Box::new(AstNode::Expr(ExprKind::IntLit(42)))),
                 }
             ]));
         let signature = Type::Function { dtype: Box::new(Type::Scalar(PrimType::Int)),
@@ -2028,7 +1988,7 @@ mod tests {
             AstNode::VarDecl {
                 id: 1,
                 dtype: Type::Scalar(PrimType::Char),
-                init: Some(Box::new(AstNode::CharLit('a'))),
+                init: Some(Box::new(AstNode::Expr(ExprKind::CharLit('a')))),
             }
         ]));
         let signature = Type::Function {
@@ -2111,7 +2071,7 @@ mod tests {
             AstNode::VarDecl {
                 id: 1,
                 dtype: Type::Scalar(PrimType::Int),
-                init: Some(Box::new(AstNode::IntLit(42))),
+                init: Some(Box::new(AstNode::Expr(ExprKind::IntLit(42)))),
             }
         ]));
         let signature = Type::Function {
@@ -2154,7 +2114,7 @@ mod tests {
     fn print_one_int() {
         assert_eq!(
             parse_print_stmt("{print 42;}"),
-            AstNode::Print(vec![AstNode::IntLit(42)])
+            AstNode::Print(vec![AstNode::Expr(ExprKind::IntLit(42))])
         );
     }
 
@@ -2164,7 +2124,7 @@ mod tests {
         match result {
             AstNode::Print(args) => {
                 assert_eq!(args.len(), 1);
-                assert!(matches!(args[0], AstNode::StringLit(_)));
+                assert!(matches!(args[0], AstNode::Expr(ExprKind::StringLit(_))));
             }
             _ => panic!("expected Print"),
         }
@@ -2175,9 +2135,9 @@ mod tests {
         assert_eq!(
             parse_print_stmt("{print 1, 2, 3;}"),
             AstNode::Print(vec![
-                AstNode::IntLit(1),
-                AstNode::IntLit(2),
-                AstNode::IntLit(3),
+                AstNode::Expr(ExprKind::IntLit(1)),
+                AstNode::Expr(ExprKind::IntLit(2)),
+                AstNode::Expr(ExprKind::IntLit(3)),
             ])
         );
     }
@@ -2187,10 +2147,9 @@ mod tests {
         assert_eq!(
             parse_print_stmt("{print 1 + 2;}"),
             AstNode::Print(vec![
-                AstNode::Add {
-                    left: Box::new(AstNode::IntLit(1)),
-                    right: Box::new(AstNode::IntLit(2)),
-                }
+                AstNode::make_binary(TokenKind::Plus.into(),
+                    AstNode::Expr(ExprKind::IntLit(1)),
+                    AstNode::Expr(ExprKind::IntLit(2))),
             ])
         );
     }
@@ -2213,7 +2172,7 @@ mod tests {
         match result {
             AstNode::Print(args) => {
                 assert_eq!(args.len(), 1);
-                assert!(matches!(args[0], AstNode::Incr(_)));
+                assert!(matches!(args[0], AstNode::Expr(ExprKind::Incr(_))));
             }
             _ => panic!("expected Print"),
         }
@@ -2233,7 +2192,7 @@ mod tests {
     fn return_no_expr() {
         assert_eq!(
             parse_return_stmt("{return;}"),
-            AstNode::Return(None)
+            AstNode::VoidReturn
         );
     }
 
@@ -2241,7 +2200,7 @@ mod tests {
     fn return_int() {
         assert_eq!(
             parse_return_stmt("{return 42;}"),
-            AstNode::Return(Some(Box::new(AstNode::IntLit(42))))
+            AstNode::make_return(AstNode::Expr(ExprKind::IntLit(42)))
         );
     }
 
@@ -2249,7 +2208,7 @@ mod tests {
     fn return_ident() {
         assert_eq!(
             parse_return_stmt("{return x;}"),
-            AstNode::Return(Some(Box::new(AstNode::Ident(0))))
+            AstNode::make_return(AstNode::Ident(0))
         );
     }
 
@@ -2257,10 +2216,10 @@ mod tests {
     fn return_complex_expr() {
         assert_eq!(
             parse_return_stmt("{return 1 + 2;}"),
-            AstNode::Return(Some(Box::new(AstNode::Add {
-                left: Box::new(AstNode::IntLit(1)),
-                right: Box::new(AstNode::IntLit(2)),
-            })))
+            AstNode::make_return(
+                AstNode::make_binary(TokenKind::Plus.into(),
+                    AstNode::Expr(ExprKind::IntLit(1)),
+                    AstNode::Expr(ExprKind::IntLit(2)))),
         );
     }
 
@@ -2268,7 +2227,7 @@ mod tests {
     fn return_bool() {
         assert_eq!(
             parse_return_stmt("{return true;}"),
-            AstNode::Return(Some(Box::new(AstNode::BoolVal(true))))
+            AstNode::make_return(AstNode::Expr(ExprKind::BoolVal(true)))
         );
     }
 
@@ -2276,7 +2235,7 @@ mod tests {
     fn return_char() {
         assert_eq!(
             parse_return_stmt("{return 'a';}"),
-            AstNode::Return(Some(Box::new(AstNode::CharLit('a'))))
+            AstNode::make_return(AstNode::Expr(ExprKind::CharLit('a')))
         );
     }
 
@@ -2284,8 +2243,8 @@ mod tests {
     fn return_string() {
         let result = parse_return_stmt("{return \"hello\";}");
         match result {
-            AstNode::Return(Some(expr)) => {
-                assert!(matches!(*expr, AstNode::StringLit(_)));
+            AstNode::Return(expr) => {
+                assert!(matches!(*expr, AstNode::Expr(ExprKind::StringLit(_))));
             }
             _ => panic!("expected Return with StringLit"),
         }
@@ -2295,7 +2254,7 @@ mod tests {
     fn return_unary_minus() {
         assert_eq!(
             parse_return_stmt("{return -5;}"),
-            AstNode::Return(Some(Box::new(AstNode::Minus(Box::new(AstNode::IntLit(5))))))
+            AstNode::make_return(AstNode::make_minus(AstNode::Expr(ExprKind::IntLit(5))))
         );
     }
 
@@ -2303,8 +2262,8 @@ mod tests {
     fn return_func_call() {
         let result = parse_return_stmt("{return foo(42);}");
         match result {
-            AstNode::Return(Some(expr)) => {
-                assert!(matches!(*expr, AstNode::FuncCall { .. }));
+            AstNode::Return(expr) => {
+                assert!(matches!(*expr, AstNode::Expr(ExprKind::FuncCall { .. })));
             }
             _ => panic!("expected Return with FuncCall"),
         }
@@ -2314,8 +2273,8 @@ mod tests {
     fn return_post_incr() {
         let result = parse_return_stmt("{return x++;}");
         match result {
-            AstNode::Return(Some(expr)) => {
-                assert!(matches!(*expr, AstNode::Incr(_)));
+            AstNode::Return(expr) => {
+                assert!(matches!(*expr, AstNode::Expr(ExprKind::Incr(_))));
             }
             _ => panic!("expected Return with Incr"),
         }
