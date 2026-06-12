@@ -32,6 +32,7 @@ Note 7: The expressions are not included in the grammar - use your imagination :
                           | if_statement
                           | print_statement
                           | return_statement
+                          | function_call
                           | block
                           ;
 
@@ -53,6 +54,8 @@ Note 7: The expressions are not included in the grammar - use your imagination :
     print_statement       : 'print' , [ expression , { ',' , expression } ] , ';' ;
 
     return_statement      : 'return' , expression ;
+
+    function_call         : identifier , '(' , [ expr , { ',' , expr } ] , ')' , ';' ;
 
     function_declaration  : function_signature , '=' , block ;
 

@@ -144,7 +144,8 @@ impl<I> Parser<I>
                 },
                 Some(Token { kind: TokenKind::Ident(id), .. }) => {
                     self.scanner.discard_token();
-                    match self.scanner.scan() {
+                    let next_tk = self.scanner.scan();
+                    match next_tk {
                         Some(Token { kind: TokenKind::Assign, .. }) => {
                             let expr = self.parse_expression(0);
                             self.scanner.must_be_kind(TokenKind::Semi);
@@ -155,8 +156,13 @@ impl<I> Parser<I>
                             self.scanner.must_be_kind(TokenKind::Semi);
                             decl
                         },
-                        Some(t) => fatal_tok("Expected '=' or ':'", t),
-                        None => panic!("Found EOF when expecting '=' or ':'"),
+                        Some(Token { kind: TokenKind::LeftParen, .. }) => {
+                            let fcall = self.parse_func_arguments(id);
+                            self.scanner.must_be_kind(TokenKind::Semi);
+                            fcall
+                        },
+                        Some(t) => fatal_tok("Expected '=', ':', '('", t),
+                        None => panic!("Found EOF when expecting '=', ':', or '('"),
                     }
                 },
                 Some(Token { kind: TokenKind::If, .. }) => self.parse_if(),
@@ -295,6 +301,25 @@ impl<I> Parser<I>
         }
     }
 
+    fn parse_func_arguments(&mut self, id: usize) -> AstNode {
+        let mut args = vec![];
+        if let Some(Token { kind: TokenKind::RightParen, .. }) = self.scanner.peek() {
+            self.scanner.discard_token();
+        } else {
+            loop {
+                args.push(self.parse_expression(0));
+                match self.scanner.scan() {
+                    Some(Token { kind: TokenKind::Comma, .. }) => {},
+                    Some(Token { kind: TokenKind::RightParen, .. }) => break,
+                    Some(t) => fatal_tok("Expected ',' or ')'", t),
+                    None => panic!("EOF found parsing function call arguments"),
+                }
+            }
+        }
+
+        AstNode::make_func_call(id, args)
+    }
+
     fn parse_expression(&mut self, min_bp: u8) -> AstNode {
         let mut left_node = match self.scanner.scan() {
             Some(t) => self.null_denotation(t),
@@ -341,25 +366,12 @@ impl<I> Parser<I>
                     }
                 },
                 TokenKind::LeftParen => {
-                    let mut args = vec![];
-                    if let Some(Token { kind: TokenKind::RightParen, .. }) = self.scanner.peek() {
-                        self.scanner.discard_token();
-                    } else {
-                        loop {
-                            args.push(self.parse_expression(0));
-                            match self.scanner.scan() {
-                                Some(Token { kind: TokenKind::Comma, .. }) => {},
-                                Some(Token { kind: TokenKind::RightParen, .. }) => break,
-                                Some(t) => fatal_tok("Expected ',' or ')'", t),
-                                None => panic!("EOF found parsing function call arguments"),
-                            }
-                        }
-                    }
-                    match left_node {
-                        AstNode::Ident(id) => AstNode::make_func_call(id, args),
-                        _ => fatal("Expected identifier before '('", next_tk.pos)
-                    }
+                    let AstNode::Ident(id) = left_node else { 
+                        fatal("Expected identifier before '('", next_tk.pos)
+                    };
+                    self.parse_func_arguments(id)
                 },
+
                 _ => fatal_tok("Expected binary operator, (, or [", next_tk)
             };
             left_node = result;
@@ -1589,7 +1601,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Expected '=' or ':'")]
+    #[should_panic(expected = "Expected '=', ':', '('")]
     fn block_assign_invalid_token() {
         parse_block("{x + 42;}");
     }
@@ -2290,5 +2302,115 @@ mod tests {
     #[should_panic(expected = "Expected ';'")]
     fn return_missing_semi_with_expr() {
         parse_block("{return 42}");
+    }
+
+    // ---- function call statements (NOT YET IMPLEMENTED) ----
+    // These tests assert the correct AST once the feature is implemented.
+    // They currently fail because parse_block cannot handle `ident(...)` as a statement.
+
+    fn parse_func_call_stmt(s: &str) -> AstNode {
+        let result = parse_block(s);
+        match result {
+            AstNode::Block(stmts) if stmts.len() == 1 => stmts.into_iter().next().unwrap(),
+            _ => panic!("expected Block with one statement"),
+        }
+    }
+
+    #[test]
+    fn func_call_stmt_no_args() {
+        let result = parse_func_call_stmt("{foo();}");
+        assert!(matches!(result, AstNode::Expr(ExprKind::FuncCall { id: _, params }) if params.is_empty()));
+    }
+
+    #[test]
+    fn func_call_stmt_with_args() {
+        let result = parse_func_call_stmt("{foo(42);}");
+        match result {
+            AstNode::Expr(ExprKind::FuncCall { id: _, params }) => {
+                assert_eq!(params, vec![AstNode::Expr(ExprKind::IntLit(42))]);
+            }
+            _ => panic!("expected FuncCall"),
+        }
+    }
+
+    #[test]
+    fn func_call_stmt_multiple_args() {
+        let result = parse_func_call_stmt("{foo(1, 2, 3);}");
+        match result {
+            AstNode::Expr(ExprKind::FuncCall { id: _, params }) => {
+                assert_eq!(params, vec![
+                    AstNode::Expr(ExprKind::IntLit(1)),
+                    AstNode::Expr(ExprKind::IntLit(2)),
+                    AstNode::Expr(ExprKind::IntLit(3)),
+                ]);
+            }
+            _ => panic!("expected FuncCall"),
+        }
+    }
+
+    #[test]
+    fn func_call_stmt_arg_with_expr() {
+        let result = parse_func_call_stmt("{foo(1 + 2);}");
+        match result {
+            AstNode::Expr(ExprKind::FuncCall { id: _, params }) => {
+                assert_eq!(params.len(), 1);
+                assert_eq!(
+                    params[0],
+                    AstNode::make_binary(TokenKind::Plus.into(),
+                        AstNode::Expr(ExprKind::IntLit(1)),
+                        AstNode::Expr(ExprKind::IntLit(2))))
+            }
+            _ => panic!("expected FuncCall"),
+        }
+    }
+
+    #[test]
+    fn func_call_stmt_nested() {
+        let result = parse_func_call_stmt("{foo(bar());}");
+        match result {
+            AstNode::Expr(ExprKind::FuncCall { id: _, params }) => {
+                assert_eq!(params.len(), 1);
+                assert!(matches!(params[0], AstNode::Expr(ExprKind::FuncCall { id: _, ref params }) if params.is_empty()));
+            }
+            _ => panic!("expected FuncCall"),
+        }
+    }
+
+    #[test]
+    fn func_call_stmt_after_var_decl() {
+        let result = parse_block("{x: integer = 1; foo();}");
+        match result {
+            AstNode::Block(stmts) => {
+                assert_eq!(stmts.len(), 2);
+                assert!(matches!(stmts[0], AstNode::VarDecl { .. }));
+                assert!(matches!(stmts[1], AstNode::Expr(ExprKind::FuncCall { .. })));
+            }
+            _ => panic!("expected Block"),
+        }
+    }
+
+    #[test]
+    fn func_call_stmt_before_assign() {
+        let result = parse_block("{foo(); x = 1;}");
+        match result {
+            AstNode::Block(stmts) => {
+                assert_eq!(stmts.len(), 2);
+                assert!(matches!(stmts[0], AstNode::Expr(ExprKind::FuncCall { .. })));
+                assert!(matches!(stmts[1], AstNode::Assignment { .. }));
+            }
+            _ => panic!("expected Block"),
+        }
+    }
+
+    #[test]
+    fn func_call_stmt_multiple_calls() {
+        let result = parse_block("{foo(); bar(); baz();}");
+        match result {
+            AstNode::Block(stmts) => {
+                assert_eq!(stmts.len(), 3);
+                assert!(stmts.iter().all(|s| matches!(s, AstNode::Expr(ExprKind::FuncCall { .. }))));
+            }
+            _ => panic!("expected Block"),
+        }
     }
 }
