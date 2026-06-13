@@ -218,6 +218,10 @@ impl<I> Scanner<I>
         }
     }
 
+    pub fn into_strings(self) -> Strings {
+        self.strings
+    }
+
     fn put_char(&mut self, c: Char) {
         self.last_char = Some(c)
     }
@@ -483,7 +487,7 @@ impl<I> Scanner<I>
     pub fn peek(&mut self) -> Option<Token> {
         match self.scan() {
             Some(t) => { 
-                self.put_token(t.clone());
+                self.put_token(t);
                 Some(t)
             },
             None => None,

@@ -28,3 +28,22 @@ impl Type {
         Type::Function { dtype, params }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    // Scalar types are straightforward, but Array and Function involve nested types
+
+    #[rstest]
+    #[case(5, Type::Scalar(PrimType::Bool))]
+    #[case(10, Type::Scalar(PrimType::Int))]
+    #[case(2, Type::make_array(20, Type::Scalar(PrimType::Char)))]
+    fn test_array_type_equality(#[case] size: usize, #[case] dtype: Type) {
+        assert_eq!(
+            Type::make_array(size, dtype.clone()),
+            Type::make_array(size, dtype)
+            );
+    }
+}

@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use crate::types::Type;
+
 pub struct Strings {
     strings: Vec<String>,
     mapping: HashMap<String, usize>,
@@ -29,6 +31,104 @@ impl Strings {
         self.strings.get(id)
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub enum SymbolKind {
+    Local(usize),   // Local variable and its ordinal position
+    Global,
+    Param(usize),   // Parameter and its ordinal position
+}
+
+#[derive(Debug, Clone)]
+pub struct Symbol {
+    id: usize,
+    kind: SymbolKind,
+    dtype: Type,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SymbolId(usize);
+
+#[derive(Debug, Default)]
+struct Scope {
+    bindings: HashMap<usize, SymbolId>,
+}
+
+impl Scope {
+    fn add(&mut self, string_id: usize, sym_id: SymbolId) {
+        self.bindings.insert(string_id, sym_id);
+    }
+
+    fn contains(&self, string_id: usize) -> bool {
+        self.bindings.contains_key(&string_id)
+    }
+
+    fn get(&self, string_id: usize) -> Option<&SymbolId> {
+        self.bindings.get(&string_id)
+    }
+}
+
+#[derive(Debug)]
+pub struct SymbolTable {
+    symbols: Vec<Symbol>,
+    scopes: Vec<Scope>,
+}
+
+impl SymbolTable {
+    pub fn levels(&self) -> usize {
+        self.scopes.len()
+    }
+
+    pub fn at_global(&self) -> bool {
+        self.levels() == 1
+    }
+
+    pub fn enter_scope(&mut self) {
+        self.scopes.push(Scope::default());
+    }
+
+    pub fn leave_scope(&mut self) {
+        // We can't leave the global scope!
+        assert!(self.levels() > 1);
+        self.scopes.pop();
+    }
+
+    pub fn bind(&mut self, sym: Symbol) {
+        let sym_id = SymbolId(self.symbols.len());
+        let string_id = sym.id;
+        self.symbols.push(sym);
+        self.scopes.last_mut()
+            .unwrap()
+            .add(string_id, sym_id);
+    }
+
+    pub fn lookup(&self, id: usize) -> Option<&Symbol> {
+        self.scopes
+            .iter()
+            .rev()
+            .filter_map(|scope| scope.get(id))
+            .next()
+            .and_then(|&id| self.symbols.get(id.0))
+    }
+
+    pub fn lookup_current(&self, id: usize) -> Option<&Symbol> {
+        self.scopes
+            .last()
+            .and_then(|scope| scope.get(id))
+            .and_then(|&id| self.symbols.get(id.0))
+    }
+}
+
+impl Default for SymbolTable {
+    fn default() -> Self {
+        // We start with the global scope in place
+        Self {
+            symbols: vec![],
+            scopes: vec![Scope::default()]
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
