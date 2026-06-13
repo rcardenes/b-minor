@@ -1,8 +1,8 @@
 use std::iter::Iterator;
 
 use crate::{
-    ast::{AstNode},
-    sym::{Strings, SymbolTable},
+    ast::AstNode,
+    sym::{Strings, Symbol, SymbolKind, SymbolTable},
     syn::Parser,
 };
 
@@ -26,11 +26,31 @@ impl<I> From<Parser<I>> for Semantic
 
 impl Semantic {
     pub fn get_num_errors(&self) -> usize {
-        self.errors
+        self.errors:
     }
 
-    pub fn resolve_var_decl(&mut self, node: &AstNode, global: bool) {
-        todo!()
+    fn emit_error(&mut self, message: &str) {
+        self.errors += 1;
+        eprintln!("{}", message)
+    }
+
+    pub fn resolve_var_decl(&mut self, node: &AstNode, kind: SymbolKind) {
+        let AstNode::VarDecl { id, name, dtype, init } = node else { unreachable!() };
+
+        let symbol = Symbol::create(*name, kind, dtype.clone());
+
+        if self.table.bind(symbol).is_err() {
+            let var_name = self.strings.get(*name).expect("My shitty compiler tried to access a variable name that is not there!");
+            let message = format!("Duplicate global symbol '{var_name}'");
+            self.emit_error(&message)
+        }
+
+        if let Some(node) = init {
+            match node.as_ref() {
+
+            }
+        }
+
     }
 
     pub fn resolve_function_decl(&mut self, node: &AstNode) {
@@ -40,7 +60,7 @@ impl Semantic {
     pub fn resolve(&mut self, tree: &Vec<AstNode>) {
         for decl in tree {
             match decl {
-                AstNode::VarDecl {..} => self.resolve_var_decl(decl, true),
+                AstNode::VarDecl {..} => self.resolve_var_decl(decl, SymbolKind::Global),
                 AstNode::ForwardFunction {..}
                 | AstNode::Function {..} => self.resolve_function_decl(decl),
                 _ => unreachable!("Got illegal {decl:?} at the global scope. Parsing has failed")

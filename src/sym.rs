@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-
+use anyhow::{Result, bail};
 use crate::types::Type;
 
 pub struct Strings {
@@ -41,9 +41,15 @@ pub enum SymbolKind {
 
 #[derive(Debug, Clone)]
 pub struct Symbol {
-    id: usize,
+    name: usize,
     kind: SymbolKind,
     dtype: Type,
+}
+
+impl Symbol {
+    pub fn create(name: usize, kind: SymbolKind, dtype: Type) -> Self {
+        Symbol { name, kind, dtype }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -93,13 +99,20 @@ impl SymbolTable {
         self.scopes.pop();
     }
 
-    pub fn bind(&mut self, sym: Symbol) {
+    pub fn bind(&mut self, sym: Symbol) -> Result<()> {
         let sym_id = SymbolId(self.symbols.len());
-        let string_id = sym.id;
+        let string_id = sym.name;
+
+        if self.lookup_current(string_id).is_some() {
+            bail!("Already defined symbol with string {string_id}")
+        }
+
         self.symbols.push(sym);
         self.scopes.last_mut()
             .unwrap()
             .add(string_id, sym_id);
+
+        Ok(())
     }
 
     pub fn lookup(&self, id: usize) -> Option<&Symbol> {
