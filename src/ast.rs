@@ -46,7 +46,7 @@ pub enum ExprKind {
     Unary(UnaryOp, Box<AstNode>),
     Binary { left: Box<AstNode>, op: BinaryOp, right: Box<AstNode> },
     FuncCall { name: usize, params: Vec<AstNode> },
-    Subscript { name: usize, index: Box<AstNode> },
+    Subscript { a_ref: Box<AstNode>, index: Box<AstNode> },
 }
 
 #[derive(Clone, Debug, Derivative, Eq)]
@@ -162,9 +162,10 @@ impl AstNode {
         }
     }
 
-    pub fn make_subscript(name: usize, index: AstNode) -> AstNode {
+    pub fn make_subscript(a_ref: AstNode, index: AstNode) -> AstNode {
+        let a_ref = Box::new(a_ref);
         let index = Box::new(index);
-        AstNode::make_expr(ExprKind::Subscript { name, index })
+        AstNode::make_expr(ExprKind::Subscript { a_ref, index })
     }
 
     pub fn make_func_call(name: usize, params: Vec<AstNode>) -> AstNode {

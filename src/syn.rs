@@ -1,6 +1,7 @@
 use std::iter::Iterator;
+
 use crate::{
-    ast::AstNode,
+    ast::{AstNode, ExprKind},
     scan::{Scanner, Token, TokenKind, fatal, fatal_tok},
     sym::Strings,
     types::*,
@@ -151,7 +152,7 @@ impl<I> Parser<I>
                     self.parse_block()
                 },
                 Some(Token { kind: TokenKind::Ident(id), .. }) => {
-                    self.scanner.discard_token();
+                    let leader = self.scanner.scan().unwrap();
                     let next_tk = self.scanner.scan();
                     match next_tk {
                         Some(Token { kind: TokenKind::Assign, .. }) => {
@@ -169,7 +170,15 @@ impl<I> Parser<I>
                             self.scanner.must_be_kind(TokenKind::Semi);
                             fcall
                         },
-                        Some(t) => fatal_tok("Expected '=', ':', '('", t),
+                        Some(t) => {
+                            // Last option, it might be an expression!
+                            self.scanner.put_token(t);
+                            self.scanner.put_token(leader);
+                            let expr = self.parse_expression(0);
+                            self.scanner.must_be_kind(TokenKind::Semi);
+                            expr
+                        }
+//                        Some(t) => fatal_tok("Expected '=', ':', '('", t),
                         None => panic!("Found EOF when expecting '=', ':', or '('"),
                     }
                 },
@@ -177,7 +186,7 @@ impl<I> Parser<I>
                 Some(Token { kind: TokenKind::For, .. }) => self.parse_for(),
                 Some(Token { kind: TokenKind::Print, .. }) => self.parse_print(),
                 Some(Token { kind: TokenKind::Return, .. }) => self.parse_return(),
-                Some(t) => fatal_tok("Expected statement or declaration", t),
+                Some(_) => self.parse_expression(0),
                 None => panic!("Found EOF expecting a statement"),
             };
             statements.push(statement);
@@ -238,27 +247,22 @@ impl<I> Parser<I>
         let dtype = self.parse_var_decl_type();
         let init = if let Some(Token { kind: TokenKind::Assign, .. }) = self.scanner.peek() {
             self.scanner.discard_token();
-            match dtype {
-                Type::Array { .. } => {
-                    let mut args = vec![];
-                    self.scanner.must_be_kind(TokenKind::LeftBrk);
-                    loop {
-                        args.push(self.parse_expression(0));
-                        match self.scanner.scan() {
-                            Some(Token { kind: TokenKind::Comma, .. }) => {},
-                            Some(Token { kind: TokenKind::RightBrk, .. }) => break,
-                            Some(t) => fatal_tok("Expected ',' or ']'", t),
-                            None => panic!("EOF found parsing array initialization"),
-                        }
+            if self.scanner.maybe_kind(TokenKind::LeftBrk, true) {
+                let mut args = vec![];
+                loop {
+                    args.push(self.parse_expression(0));
+                    match self.scanner.scan() {
+                        Some(Token { kind: TokenKind::Comma, .. }) => {},
+                        Some(Token { kind: TokenKind::RightBrk, .. }) => break,
+                        Some(t) => fatal_tok("Expected ',' or ']'", t),
+                        None => panic!("EOF found parsing array initialization"),
                     }
-                    Some(AstNode::ArrayInitializer(args))
-                },
-                _ => {
-                    let Some(next) = self.scanner.scan() else {
-                        panic!("Found EOF while waiting for a literal")
-                    };
-                    Some(AstNode::make_literal(next))
                 }
+                Some(AstNode::ArrayInitializer(args))
+            } else if self.scanner.peek().is_none() {
+                panic!("Found EOF parsing an initializer")
+            } else {
+                Some(self.parse_expression(0))
             }
         } else {
             None
@@ -369,8 +373,9 @@ impl<I> Parser<I>
                     let index = self.parse_expression(0);
                     self.scanner.must_be_kind(TokenKind::RightBrk);
                     match left_node {
-                        AstNode::Ident {name, ..} => AstNode::make_subscript(name, index),
-                        _ => fatal("Expected identifier before subscript", next_tk.pos)
+                        AstNode::Ident {..}
+                        | AstNode::Expr { kind: ExprKind::Subscript {..}, .. } => AstNode::make_subscript(left_node, index),
+                        _ => fatal("Expected identifier or ']' before subscript", next_tk.pos)
                     }
                 },
                 TokenKind::LeftParen => {
@@ -773,6 +778,23 @@ mod tests {
         }
     }
 
+    #[test]
+    fn nested_subscript() {
+        let result = parse("arr[0][2]");
+        match result {
+            AstNode::Expr { kind: ExprKind::Subscript { a_ref, index, .. }, .. } => {
+                match *a_ref {
+                    AstNode::Expr { kind: ExprKind::Subscript { index, .. }, .. } => {
+                        assert_eq!(*index, AstNode::make_expr(ExprKind::IntLit(0)));
+                    },
+                    _ => panic!("expected an inner subscript")
+                }
+                assert_eq!(*index, AstNode::make_expr(ExprKind::IntLit(2)));
+            }
+            _ => panic!("expected Subscript"),
+        }
+    }
+
     // ---- min_bp filtering ----
 
     #[test]
@@ -840,7 +862,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Expected identifier before subscript")]
+    #[should_panic(expected = "Expected identifier or ']' before subscript")]
     fn subscript_on_non_ident() {
         parser("42[0]").parse_expression(0);
     }
@@ -1062,13 +1084,13 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Expected a literal")]
+    #[should_panic(expected = "Expected to find '(', '!', '-', a literal, or an identifier")]
     fn decl_missing_init_expr() {
         parser("x: integer = ;").declaration();
     }
 
     #[test]
-    #[should_panic(expected = "Found EOF while waiting for a literal")]
+    #[should_panic(expected = "Found EOF parsing an initializer")]
     fn decl_eof_after_assign() {
         parser("x: integer =").declaration();
     }
@@ -1083,12 +1105,6 @@ mod tests {
     #[should_panic(expected = "Expected an identifier at")]
     fn no_declaration_at_top_level() {
         parser("(1 + 2)").parse_top();
-    }
-
-    #[test]
-    #[should_panic(expected = "Expected '['")]
-    fn var_decl_array_init_fails() {
-        parse_decl("x: array [5] integer = 42;");
     }
 
     #[test]
@@ -1220,12 +1236,6 @@ mod tests {
             parse_block("{{}}"),
             AstNode::Block(vec![AstNode::EmptyBlock])
         );
-    }
-
-    #[test]
-    #[should_panic(expected = "Expected statement or declaration")]
-    fn block_invalid_statement() {
-        parse_block("{42}");
     }
 
     #[test]
@@ -1527,9 +1537,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Expected '=', ':', '('")]
+    #[should_panic(expected = "Expected ';', found ,")]
     fn block_assign_invalid_token() {
-        parse_block("{x + 42;}");
+        parse_block("{x , 42;}");
     }
 
     #[test]

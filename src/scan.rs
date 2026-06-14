@@ -200,7 +200,7 @@ pub struct Scanner<I>
     line: usize,
     col: usize,
     last_char: Option<Char>,
-    last_token: Option<Token>,
+    token_buffer: Vec<Token>,
     strings: Strings,
 }
 
@@ -213,7 +213,7 @@ impl<I> Scanner<I>
             line: 1,
             col: 1,
             last_char: None,
-            last_token: None,
+            token_buffer: vec![],
             strings: Strings::new(),
         }
     }
@@ -227,15 +227,15 @@ impl<I> Scanner<I>
     }
 
     pub fn put_token(&mut self, token: Token) {
-        self.last_token = Some(token)
+        self.token_buffer.push(token);
     }
 
     pub fn consume_token(&mut self) -> Token {
-        self.last_token.take().expect("No token to consume")
+        self.token_buffer.pop().expect("No token to consume")
     }
 
     pub fn discard_token(&mut self) {
-        let _ = self.last_token.take();
+        let _ = self.token_buffer.pop();
     }
 
     fn advance_char(&mut self, c: char) -> Char {
@@ -404,7 +404,7 @@ impl<I> Scanner<I>
     }
 
     pub fn scan(&mut self) -> Option<Token> {
-        if let Some(t) = self.last_token.take() {
+        if let Some(t) = self.token_buffer.pop() {
             Some(t)
         } else {
             if let Some(Char { c, pos }) = self.skip() {
@@ -550,7 +550,7 @@ mod tests {
     #[test]
     fn test_put_token() {
         let mut scn= scanner("");
-        assert!(scn.last_token.is_none());
+        assert!(scn.token_buffer.pop().is_none());
         let t = Token::at(TokenKind::Semi, Pos::at(1, 1));
         scn.put_token(t);
         assert_eq!(scn.scan(), Some(t));
