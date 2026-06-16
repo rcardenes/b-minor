@@ -9,7 +9,7 @@ use crate::{
 
 fn binding_power(token: &Token, unary: bool) -> u8 {
     match token.kind {
-//        TokenKind::Assign => 10,
+        TokenKind::Assign => 10,
         TokenKind::And | TokenKind::Or => 20,
         TokenKind::Lss | TokenKind::Leq
         | TokenKind::Gtr | TokenKind::Geq
@@ -63,12 +63,11 @@ impl<I> Parser<I>
 
     fn parse_assign(&mut self) -> AstNode {
         // TODO: This needs help to generate error messages. We've lost the token
-        let lvalue = match self.parse_expression(0) {
-            AstNode::Ident { name, .. } => name,
-            _ => panic!("Expected an identifier")
-        };
-        self.scanner.must_be_kind(TokenKind::Assign);
-        AstNode::make_assignment(lvalue, self.parse_expression(0))
+        let expr = self.parse_expression(0);
+        match expr {
+            AstNode::Expr { kind: ExprKind::Assignment {..}, .. } => expr,
+            x => panic!("Expected an identifier, got {x:?}")
+        }
     }
 
     fn parse_for(&mut self) -> AstNode {
@@ -155,11 +154,11 @@ impl<I> Parser<I>
                     let leader = self.scanner.scan().unwrap();
                     let next_tk = self.scanner.scan();
                     match next_tk {
-                        Some(Token { kind: TokenKind::Assign, .. }) => {
-                            let expr = self.parse_expression(0);
-                            self.scanner.must_be_kind(TokenKind::Semi);
-                            AstNode::make_assignment(id, expr)
-                        },
+                        // Some(Token { kind: TokenKind::Assign, .. }) => {
+                        //     let expr = self.parse_expression(0);
+                        //     self.scanner.must_be_kind(TokenKind::Semi);
+                        //     AstNode::make_assignment(id, expr)
+                        // },
                         Some(Token { kind: TokenKind::Colon, .. }) => {
                             let decl = self.parse_var_decl_with_id(id);
                             self.scanner.must_be_kind(TokenKind::Semi);
@@ -219,7 +218,13 @@ impl<I> Parser<I>
             self.scanner.discard_token();
         } else {
             loop {
-                params.push(self.parse_var_decl());
+                let AstNode::VarDecl { name, dtype, init, .. } = self.parse_var_decl()
+                    else { unreachable!() };
+
+                // TODO: We need span info to have a proper error message here
+                if init.is_some() { panic!("No initialization allowed in function signatures") }
+
+                params.push(Param { name, dtype });
                 match self.scanner.scan() {
                     Some(Token { kind: TokenKind::Comma, .. }) => {},
                     Some(Token { kind: TokenKind::RightParen, .. }) => break,
@@ -243,22 +248,30 @@ impl<I> Parser<I>
         self.parse_var_decl_with_id(id)
     }
 
+    fn parse_array_initializer(&mut self) -> AstNode {
+        let mut args = vec![];
+        loop {
+            args.push(if self.scanner.maybe_kind(TokenKind::LeftBrk, true) {
+                self.parse_array_initializer()
+            } else {
+                self.parse_expression(0)
+            });
+            match self.scanner.scan() {
+                Some(Token { kind: TokenKind::Comma, .. }) => {},
+                Some(Token { kind: TokenKind::RightBrk, .. }) => break,
+                Some(t) => fatal_tok("Expected ',' or ']'", t),
+                None => panic!("EOF found parsing array initialization"),
+            }
+        }
+        AstNode::ArrayInitializer(args)
+    }
+
     fn parse_var_decl_with_id(&mut self, ident: usize) -> AstNode {
         let dtype = self.parse_var_decl_type();
         let init = if let Some(Token { kind: TokenKind::Assign, .. }) = self.scanner.peek() {
             self.scanner.discard_token();
             if self.scanner.maybe_kind(TokenKind::LeftBrk, true) {
-                let mut args = vec![];
-                loop {
-                    args.push(self.parse_expression(0));
-                    match self.scanner.scan() {
-                        Some(Token { kind: TokenKind::Comma, .. }) => {},
-                        Some(Token { kind: TokenKind::RightBrk, .. }) => break,
-                        Some(t) => fatal_tok("Expected ',' or ']'", t),
-                        None => panic!("EOF found parsing array initialization"),
-                    }
-                }
-                Some(AstNode::ArrayInitializer(args))
+                Some(self.parse_array_initializer())
             } else if self.scanner.peek().is_none() {
                 panic!("Found EOF parsing an initializer")
             } else {
@@ -308,7 +321,7 @@ impl<I> Parser<I>
             | TokenKind::StringLit(_)
             | TokenKind::True
             | TokenKind::False => AstNode::make_literal(tok),
-            TokenKind::Ident(id) => AstNode::make_ident(id),
+            TokenKind::Ident(id) => AstNode::make_expr(ExprKind::Ident(id)),
             _ => fatal_tok("Expected to find '(', '!', '-', a literal, or an identifier", tok),
         }
     }
@@ -364,7 +377,7 @@ impl<I> Parser<I>
                 TokenKind::Incr
                 | TokenKind::Decr => {
                     match left_node {
-                        AstNode::Ident {name, ..} => AstNode::make_postfix(next_tk.kind, name),
+                        AstNode::Expr {kind: ExprKind::Ident(name), ..} => AstNode::make_postfix(next_tk.kind, name),
                         _ => fatal_tok("Expected identifier before", next_tk)
                     }
                 },
@@ -373,16 +386,22 @@ impl<I> Parser<I>
                     let index = self.parse_expression(0);
                     self.scanner.must_be_kind(TokenKind::RightBrk);
                     match left_node {
-                        AstNode::Ident {..}
+                        AstNode::Expr {kind: ExprKind::Ident(_), .. }
                         | AstNode::Expr { kind: ExprKind::Subscript {..}, .. } => AstNode::make_subscript(left_node, index),
                         _ => fatal("Expected identifier or ']' before subscript", next_tk.pos)
                     }
                 },
                 TokenKind::LeftParen => {
-                    let AstNode::Ident {name, ..} = left_node else { 
+                    let AstNode::Expr {kind: ExprKind::Ident(name), ..} = left_node else { 
                         fatal("Expected identifier before '('", next_tk.pos)
                     };
                     self.parse_func_arguments(name)
+                },
+                TokenKind::Assign => {
+                    let AstNode::Expr {kind: ExprKind::Ident(name), ..} = left_node else {
+                        fatal("Expected identifier before '='", next_tk.pos)
+                    };
+                    AstNode::make_assignment(name, self.parse_expression(binding_power(&next_tk, false)))
                 },
 
                 _ => fatal_tok("Expected binary operator, (, or [", next_tk)
@@ -481,7 +500,7 @@ mod tests {
 
     #[test]
     fn ident() {
-        assert!(matches!(parse("x"), AstNode::Ident{..}));
+        assert!(matches!(parse("x"), AstNode::Expr{ kind: ExprKind::Ident(_), .. }));
     }
 
     // ---- Grouping ----
@@ -761,7 +780,7 @@ mod tests {
         let result = parse("arr[0]");
         match result {
             AstNode::Expr { kind: ExprKind::Subscript { index, .. }, .. } => {
-                assert_eq!(*index, AstNode::make_expr(ExprKind::IntLit(0)));
+                assert_eq!(index, vec![AstNode::make_expr(ExprKind::IntLit(0))]);
             }
             _ => panic!("expected Subscript"),
         }
@@ -772,7 +791,7 @@ mod tests {
         let result = parse("arr[i + 1]");
         match result {
             AstNode::Expr { kind: ExprKind::Subscript { index, .. }, .. } => {
-                assert!(matches!(*index, AstNode::Expr { kind: ExprKind::Binary { op: BinaryOp::Add, .. }, .. }))
+                assert!(matches!(index.as_slice(), [AstNode::Expr { kind: ExprKind::Binary { op: BinaryOp::Add, .. }, .. }]))
             }
             _ => panic!("expected Subscript"),
         }
@@ -782,14 +801,8 @@ mod tests {
     fn nested_subscript() {
         let result = parse("arr[0][2]");
         match result {
-            AstNode::Expr { kind: ExprKind::Subscript { a_ref, index, .. }, .. } => {
-                match *a_ref {
-                    AstNode::Expr { kind: ExprKind::Subscript { index, .. }, .. } => {
-                        assert_eq!(*index, AstNode::make_expr(ExprKind::IntLit(0)));
-                    },
-                    _ => panic!("expected an inner subscript")
-                }
-                assert_eq!(*index, AstNode::make_expr(ExprKind::IntLit(2)));
+            AstNode::Expr { kind: ExprKind::Subscript {index, .. }, .. } => {
+                assert_eq!(index.as_slice(), [AstNode::make_expr(ExprKind::IntLit(0)), AstNode::make_expr(ExprKind::IntLit(2))]);
             }
             _ => panic!("expected Subscript"),
         }
@@ -1190,7 +1203,7 @@ mod tests {
             parse_func_sig("integer(x: integer)"),
             Type::make_signature(
                 Type::Scalar(PrimType::Int),
-                vec![AstNode::make_var_decl(0, Type::Scalar(PrimType::Int), None)],
+                vec![Param { name: 0, dtype: Type::Scalar(PrimType::Int) }],
             )
         );
     }
@@ -1201,8 +1214,8 @@ mod tests {
             parse_func_sig("char(x: boolean, y: string)"),
             Type::make_signature(
                 Type::Scalar(PrimType::Char),
-                vec![AstNode::make_var_decl(0, Type::Scalar(PrimType::Bool), None),
-                     AstNode::make_var_decl(1, Type::Scalar(PrimType::String), None)],
+                vec![Param { name: 0, dtype: Type::Scalar(PrimType::Bool) },
+                     Param { name: 1, dtype: Type::Scalar(PrimType::String) }],
                 ),
         );
     }
@@ -1416,7 +1429,7 @@ mod tests {
         match result {
             AstNode::Block(stmts) if stmts.len() == 1 => {
                 match &stmts[0] {
-                    AstNode::Assignment { lvalue: 0, expr, .. } if matches!(**expr, AstNode::Expr { kind: ExprKind::StringLit(_), .. }) => {},
+                    AstNode::Expr { kind: ExprKind::Assignment { lvalue: 0, rvalue, .. }, .. } if matches!(**rvalue, AstNode::Expr { kind: ExprKind::StringLit(_), .. }) => {},
                     _ => panic!("expected Assignment with StringLit"),
                 }
             }
@@ -1452,8 +1465,8 @@ mod tests {
         match result {
             AstNode::Block(stmts) if stmts.len() == 1 => {
                 match &stmts[0] {
-                    AstNode::Assignment { lvalue: 0, expr, .. } => {
-                        assert!(matches!(**expr, AstNode::Expr { kind: ExprKind::FuncCall { .. }, .. }));
+                    AstNode::Expr { kind: ExprKind::Assignment { lvalue: 0, rvalue }, .. } => {
+                        assert!(matches!(**rvalue, AstNode::Expr { kind: ExprKind::FuncCall { .. }, .. }));
                     }
                     _ => panic!("expected Assignment with FuncCall"),
                 }
@@ -1468,8 +1481,8 @@ mod tests {
         match result {
             AstNode::Block(stmts) if stmts.len() == 1 => {
                 match &stmts[0] {
-                    AstNode::Assignment { lvalue: 0, expr, .. } => {
-                        assert!(matches!(**expr, AstNode::Expr { kind: ExprKind::Subscript { .. }, .. }));
+                    AstNode::Expr { kind: ExprKind::Assignment { lvalue: 0, rvalue }, .. } => {
+                        assert!(matches!(**rvalue, AstNode::Expr { kind: ExprKind::Subscript { .. }, .. }));
                     },
                     _ => panic!("expected Assignment with Subscript"),
                 }
@@ -1507,7 +1520,7 @@ mod tests {
                     Type::Scalar(PrimType::Int),
                     Some(AstNode::make_expr(ExprKind::IntLit(1))),
                 ),
-                AstNode::make_assignment(1, AstNode::make_ident(0))
+                AstNode::make_assignment(1, AstNode::make_ident_expr(0))
             ])
         );
     }
@@ -1611,7 +1624,7 @@ mod tests {
             parse_block("{if (a) { x: integer = 42; }}"),
             AstNode::Block(vec![
                 AstNode::make_if(
-                    AstNode::make_ident(0),
+                    AstNode::make_ident_expr(0),
                     AstNode::Block(vec![
                         AstNode::make_var_decl(1, Type::Scalar(PrimType::Int), Some(AstNode::make_expr(ExprKind::IntLit(42))))
                     ]),
@@ -1627,13 +1640,13 @@ mod tests {
             parse_block("{if (a) { x = 1; } else { if (b) { y = 2; } }}"),
             AstNode::Block(vec![
                 AstNode::make_if(
-                    AstNode::make_ident(0),
+                    AstNode::make_ident_expr(0),
                     AstNode::Block(vec![
                         AstNode::make_assignment(1, AstNode::make_expr(ExprKind::IntLit(1)))
                     ]),
                     AstNode::Block(vec![
                         AstNode::If {
-                            cond: Box::new(AstNode::make_ident(2)),
+                            cond: Box::new(AstNode::make_ident_expr(2)),
                             t_branch: Box::new(AstNode::Block(vec![
                                 AstNode::make_assignment(3, AstNode::make_expr(ExprKind::IntLit(2)))
                             ])),
@@ -1715,7 +1728,7 @@ mod tests {
             parse_for_stmt("{for (; a < b;) {}}"),
             AstNode::make_for(
                 vec![],
-                AstNode::make_binary(TokenKind::Lss.into(), AstNode::make_ident(0), AstNode::make_ident(1)),
+                AstNode::make_binary(TokenKind::Lss.into(), AstNode::make_ident_expr(0), AstNode::make_ident_expr(1)),
                 vec![],
                 AstNode::EmptyBlock),
         );
@@ -1767,13 +1780,13 @@ mod tests {
             AstNode::make_for(
                 vec![AstNode::make_assignment(0, AstNode::make_expr(ExprKind::IntLit(0)))],
                 AstNode::make_binary(TokenKind::Lss.into(),
-                    AstNode::make_ident(0),
+                    AstNode::make_ident_expr(0),
                     AstNode::make_expr(ExprKind::IntLit(10))),
                 vec![AstNode::make_expr(ExprKind::Incr(0))],
                 AstNode::Block(vec![
                     AstNode::make_assignment(0,
                         AstNode::make_binary(TokenKind::Star.into(),
-                            AstNode::make_ident(0),
+                            AstNode::make_ident_expr(0),
                             AstNode::make_expr(ExprKind::IntLit(2)))),
                 ])),
         );
@@ -1789,7 +1802,7 @@ mod tests {
                 post_op: vec![],
                 body: Box::new(AstNode::Block(vec![
                     AstNode::make_var_decl(0, Type::Scalar(PrimType::Int), Some(AstNode::make_expr(ExprKind::IntLit(42)))),
-                    AstNode::make_assignment(1, AstNode::make_ident(0)),
+                    AstNode::make_assignment(1, AstNode::make_ident_expr(0)),
                 ])),
             }
         );
@@ -1854,9 +1867,9 @@ mod tests {
         let sig = Type::make_signature(
             Type::Scalar(PrimType::Void),
             vec![
-                AstNode::make_var_decl(1, Type::Scalar(PrimType::Int), None),
-                AstNode::make_var_decl(2, Type::Scalar(PrimType::Char), None),
-            ]
+                Param { name: 1, dtype: Type::Scalar(PrimType::Int) },
+                Param { name: 2, dtype: Type::Scalar(PrimType::Char) },
+            ],
         );
         assert_eq!(
             parse_decl("foo: function void(x: integer, y: char);"),
@@ -2055,7 +2068,7 @@ mod tests {
         match result {
             AstNode::Print(args) => {
                 assert_eq!(args.len(), 3);
-                assert!(args.iter().all(|a| matches!(a, AstNode::Ident{..})));
+                assert!(args.iter().all(|a| matches!(a, AstNode::Expr{kind: ExprKind::Ident(_), ..})));
             }
             _ => panic!("expected Print"),
         }
@@ -2103,7 +2116,7 @@ mod tests {
     fn return_ident() {
         assert_eq!(
             parse_return_stmt("{return x;}"),
-            AstNode::make_return(AstNode::make_ident(0))
+            AstNode::make_return(AstNode::make_ident_expr(0))
         );
     }
 
@@ -2279,7 +2292,7 @@ mod tests {
             AstNode::Block(stmts) => {
                 assert_eq!(stmts.len(), 2);
                 assert!(matches!(stmts[0], AstNode::Expr { kind: ExprKind::FuncCall { .. }, .. }));
-                assert!(matches!(stmts[1], AstNode::Assignment { .. }));
+                assert!(matches!(stmts[1], AstNode::Expr { kind: ExprKind::Assignment { .. }, .. }));
             }
             _ => panic!("expected Block"),
         }
@@ -2295,5 +2308,129 @@ mod tests {
             }
             _ => panic!("expected Block"),
         }
+    }
+
+    // ---- Expression statements in blocks ----
+
+    #[test]
+    fn block_expr_stmt_literal() {
+        assert_eq!(
+            parse_block("{ 42 }"),
+            AstNode::Block(vec![AstNode::make_expr(ExprKind::IntLit(42))])
+        );
+    }
+
+    #[test]
+    fn block_expr_stmt_ident() {
+        assert_eq!(
+            parse_block("{ y; }"),
+            AstNode::Block(vec![AstNode::make_ident_expr(0)])
+        );
+    }
+
+    #[test]
+    fn block_expr_stmt_binary() {
+        assert_eq!(
+            parse_block("{ x + 1; }"),
+            AstNode::Block(vec![
+                AstNode::make_binary(TokenKind::Plus.into(),
+                    AstNode::make_ident_expr(0),
+                    AstNode::make_expr(ExprKind::IntLit(1)))
+            ])
+        );
+    }
+
+    // ---- parse_assign with non-assignment expression ----
+
+    #[test]
+    #[should_panic(expected = "Expected an identifier, got")]
+    fn test_parse_assign_non_assign() {
+        parse_block("{for (x + 1; true;) {}}");
+    }
+
+    // ---- parse_function_signature with initializer in param ----
+
+    #[test]
+    #[should_panic(expected = "No initialization allowed in function signatures")]
+    fn test_func_sig_init_in_param() {
+        parser("integer(x: integer = 42)").parse_function_signature();
+    }
+
+    // ---- parse_var_decl with non-ident start ----
+
+    #[test]
+    #[should_panic(expected = "Expected a variable declaration")]
+    fn test_parse_var_decl_invalid_start() {
+        parser("integer(42: integer)").parse_function_signature();
+    }
+
+    // ---- parse_top with only comments ----
+
+    #[test]
+    fn test_parse_top_line_comment() {
+        assert_eq!(parser("// just a comment\n").parse_top(), vec![]);
+    }
+
+    #[test]
+    fn test_parse_top_block_comment() {
+        assert_eq!(parser("/* block comment */").parse_top(), vec![]);
+    }
+
+    // ---- parse_var_decl_type with non-array brackets ----
+
+    #[test]
+    #[should_panic(expected = "Expected array size")]
+    fn test_parse_var_decl_type_array_non_int_size() {
+        parser("array [true] integer").parse_var_decl_type();
+    }
+
+    #[test]
+    #[should_panic(expected = "Found EOF while expecting array size")]
+    fn test_parse_var_decl_type_array_size_eof() {
+        parser("array [").parse_var_decl_type();
+    }
+
+    // ---- Parser error handling: for-loop EOF in post section ----
+
+    #[test]
+    #[should_panic(expected = "EOF found when expecting ',' or ')'")]
+    fn test_for_post_eof() {
+        parse_block("{for (; true; x++");
+    }
+
+    // ---- Parser error handling: print statement ----
+
+    #[test]
+    #[should_panic(expected = "Expected ',' or ';'")]
+    fn test_print_bad_separator() {
+        parse_block("{print 1 2;}");
+    }
+
+    #[test]
+    #[should_panic(expected = "EOF found while expecting ',' or ';'")]
+    fn test_print_eof() {
+        parse_block("{print 1");
+    }
+
+    // ---- Parser error handling: function signature ----
+
+    #[test]
+    #[should_panic(expected = "EOF found parsing function call arguments")]
+    fn test_func_sig_eof_after_param() {
+        parser("foo: function integer(x: integer").declaration();
+    }
+
+    // ---- Parser error handling: array initializer ----
+
+    #[test]
+    #[should_panic(expected = "Expected ',' or ']'")]
+    fn test_array_init_bad_separator() {
+        parse_decl("x: array [3] integer = [1 2");
+    }
+
+    #[test]
+    #[should_panic(expected = "EOF found parsing array initialization")]
+    fn test_array_init_eof() {
+        parse_decl("x: array [3] integer = [1, 2");
     }
 }

@@ -762,6 +762,7 @@ mod tests {
     #[case("'a'", 'a')]
     #[case("'\\n'", '\n')]
     #[case("'\\0'", '\0')]
+    #[case(r"'\a'", 'a')]
     #[should_panic(expected = "Empty character")]
     #[case("''", '\0')]
     #[should_panic(expected = "Found EOF while processing a character literal")]
@@ -953,5 +954,29 @@ mod tests {
     fn test_tokenkind_display(#[case] tk: TokenKind, #[case] expected: &str) {
         let dsp = format!("{}", tk);
         assert_eq!(dsp.as_str(), expected)
+    }
+
+    #[test]
+    fn test_is_eof_true() {
+        assert!(scanner("").is_eof());
+    }
+
+    #[test]
+    fn test_is_eof_false() {
+        let mut scn = scanner(",");
+        assert!(!scn.is_eof());
+    }
+
+    #[test]
+    fn test_is_eof_after_scan() {
+        let mut scn = scanner(",");
+        scn.scan();
+        assert!(scn.is_eof());
+    }
+
+    #[test]
+    #[should_panic(expected = "Found EOF while processing a character literal")]
+    fn test_char_literal_eof_after_backslash() {
+        scanner("'\\").scan();
     }
 }

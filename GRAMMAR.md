@@ -20,19 +20,20 @@ Note 6: Array size in declarations must be a constant value (a literal in this c
 for global declarations. Within blocks though, this can be any expression that evaluates
 to an integer - this will be enforced during the semantic phase though.
 
-Note 7: The expressions are not included in the grammar - use your imagination :-P
+Note 7: *Assignments are expression*, like in C.
+
+Note 8: The expressions are not included in the grammar - use your imagination :-P
 
 
     program               : [ declaration , { declaration } ] ;
 
     declaration           : function_declaration | var_declaration ;
 
-    statement             : assignment_statement
+    statement             : expression
                           | for_statement
                           | if_statement
                           | print_statement
                           | return_statement
-                          | function_call
                           | block
                           ;
 
@@ -43,19 +44,13 @@ Note 7: The expressions are not included in the grammar - use your imagination :
                           | statement
                           ;
 
-    assignment_statement  : assignment , ';'
-
     for_statement         : 'for' , '(' , [ assignment , { ',' , assignment } ] , ';' , expression , ';' , expression , ')' , block ;
-
-    assignment            : identifier , '=' , expression ;
 
     if_statement          : 'if' , '(' , expression , ')' , block , [ 'else' , block ] ;
 
     print_statement       : 'print' , [ expression , { ',' , expression } ] , ';' ;
 
     return_statement      : 'return' , expression ;
-
-    function_call         : identifier , '(' , [ expr , { ',' , expr } ] , ')' , ';' ;
 
     function_declaration  : function_signature , '=' , block ;
 
@@ -91,6 +86,12 @@ Note 7: The expressions are not included in the grammar - use your imagination :
 
     identifier            : ( letter | '_' ) , { letter | digit | '_' } ;
 
+    literal               : integer_literal
+                          | boolean_literal
+                          | char_literal
+                          | string_literal
+                          ;
+
     integer_literal       : digit , { digit } ;
 
     boolean_literal       : 'true' | 'false' ;
@@ -101,4 +102,29 @@ Note 7: The expressions are not included in the grammar - use your imagination :
 
     digit                 : '0' | ... | '9' ;
     letter                : 'A' | ... | 'Z' | 'a' | ... | 'z' ;
+
+
+    expression            : literal
+                          | identifier
+                          | '(' , expression , ')'
+                          | expression , binary_op , expression
+                          | unary_op , expression
+                          | expression , post_op
+                          | function_call
+                          | expression , '[' , expression , ']'
+                          | assignment
+                          ;
+
+    assignment            : identifier , '=' , expression ;
+
+    binary_op             : '+' | '-' | '*' | '/' | '%' | '^'
+                          | '<' | '<=' | '==' | '!=' | '=>' | '>'
+                          | '&&' | '||'
+                          ;
+
+    unary_op              : '!' | '-' ;
+
+    post_op               : '++' | '--' ;
+
+    function_call         : identifier , '(' , [ expr , { ',' , expr } ] , ')' , ';' ;
 
