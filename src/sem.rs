@@ -3,6 +3,8 @@ use std::{
     iter::Iterator,
 };
 
+use::thiserror::Error;
+
 use crate::{
     ast::{AstNode, ExprKind, NodeId},
     sym::{Strings, Symbol, SymbolKind, SymbolTable},
@@ -13,18 +15,29 @@ use crate::{
     },
 };
 
-#[derive(Debug, PartialEq)]
+#[derive(Error, Debug, PartialEq)]
 pub enum SemanticError {
+    #[error("not enough arguments")]
     NotEnoughArguments,
+    #[error("too many arguments")]
     TooManyArguments,
+    #[error("types do not match")]
     UnmatchingType,
+    #[error("not a function")]
     NotAFunction,
+    #[error("undefined symbol")]
     UndefinedSymbol,
+    #[error("wrong operand type")]
     WrongOperandType,
+    #[error("redeclaration")]
     Redeclaration,
+    #[error("wrong initializer size")]
     WrongInitializerSize,
+    #[error("invalid condition")]
     InvalidCondition,
+    #[error("illegal return type")]
     IllegalReturnType,
+    #[error("non literal initialization")]
     NonLiteralInitialization,
 }
 
@@ -255,8 +268,32 @@ impl Semantic {
         dtype
     }
 
-    pub fn resolve_array_initializer(&mut self, _dtype: &Type, _values: &[AstNode]) -> (usize, Type) {
-        todo!()
+    pub fn resolve_array_initializer(&mut self, dtype: &Type, values: &[AstNode]) -> Result<(), SemanticError> {
+        let Type::Array { size, dtype } = dtype else { unreachable!() };
+        let atype = dtype.as_ref();
+
+        if values.len() != *size {
+            return Err(SemanticError::WrongInitializerSize);
+        }
+
+        if matches!(atype, Type::Array{..}) {
+            for value in values  {
+                let AstNode::ArrayInitializer(init) = value else { return Err(SemanticError::UnmatchingType) };
+                self.resolve_array_initializer(atype, init)?;
+            }
+        } else {
+            for value in values {
+                if matches!(value, AstNode::Expr { .. }) {
+                    if self.resolve_expr(value) != *atype {
+                        return Err(SemanticError::UnmatchingType);
+                    }
+                } else {
+                    return Err(SemanticError::UnmatchingType)
+                };
+            }
+        }
+
+        Ok(())
     }
 
     pub fn resolve_var_decl(&mut self, node: &AstNode, kind: SymbolKind) {
@@ -298,11 +335,21 @@ impl Semantic {
                     }
                 },
                 AstNode::ArrayInitializer(values) => {
-                    let Type::Array { size, dtype } = dtype else { unreachable!("My shitty compiler didn't catch an array initialization on a scalar at parsing time") };
-                    let (init_size, _init_type) = self.resolve_array_initializer(dtype.as_ref(), values);
-                    if init_size != *size {
-                        self.emit_error(SemanticError::WrongInitializerSize, format!("Initializer for {var_name} has size {init_size}, should be {size}"));
+                    let Type::Array { .. } = dtype else { unreachable!("My shitty compiler didn't catch an array initialization on a scalar at parsing time") };
+                    if let Err(error) = self.resolve_array_initializer(dtype, values) {
+                        match error {
+                            SemanticError::WrongInitializerSize => {
+                                self.emit_error(SemanticError::WrongInitializerSize, format!("Wrong size for {var_name} initializer"));
+                            },
+                            SemanticError::UnmatchingType => {
+                                self.emit_error(SemanticError::UnmatchingType, format!("Wrong type whe initialing {var_name}"));
+                            },
+                            _ => {}
+                        }
                     }
+                    // if init_size != *size {
+                    //     self.emit_error(SemanticError::WrongInitializerSize, format!("Initializer for {var_name} has size {init_size}, should be {size}"));
+                    // }
                 },
                 _ => unreachable!("Trying to resolve an initializer: {:#?}", node.clone()),
             }
@@ -990,15 +1037,13 @@ mod tests {
     // ── J: Array Initialization Semantics ──
 
     #[test]
-    #[should_panic]
     fn j1_array_init_wrong_element_type() {
         let (ast, mut sem) = analyze("main: function integer() = { arr: array [3] integer = [1, true, 3]; }");
         sem.resolve(&ast);
-        assert_eq!(sem.get_num_errors(), 1);
+        assert_eq!(sem.get_errors(), vec![SemanticError::UnmatchingType]);
     }
 
     #[test]
-    #[should_panic]
     fn j2_valid_array_init_succeeds() {
         let (ast, mut sem) = analyze("main: function integer() = { arr: array [4] integer = [1, 2, 3, 4]; }");
         sem.resolve(&ast);
@@ -1006,13 +1051,21 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn j3_nested_array_init_wrong_inner_type() {
         let (ast, mut sem) = analyze(
             "main: function integer() = { mat: array [2] array [2] integer = [[1, true], [3, 4]]; }",
         );
         sem.resolve(&ast);
-        assert_eq!(sem.get_num_errors(), 1);
+        assert_eq!(sem.get_errors(), vec![SemanticError::UnmatchingType]);
+    }
+
+    #[test]
+    fn j4_array_init_wrong_size() {
+        let (ast, mut sem) = analyze(
+            "main: function integer() = { mat: array [2] array [2] integer = [[1, 2]]; }",
+        );
+        sem.resolve(&ast);
+        assert_eq!(sem.get_errors(), vec![SemanticError::WrongInitializerSize]);
     }
 
     // ── K: Error Handling Behavior ──
@@ -1159,7 +1212,6 @@ mod tests {
 
     #[test]
     fn m1_function_array_return_type() {
-        use std::string::IntoChars;
         let scanner = Scanner::new(String::new().into_chars().peekable());
         let mut sem = Semantic::from(Parser::new(scanner));
         sem.strings.add("foo".to_string());
