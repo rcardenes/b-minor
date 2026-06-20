@@ -10,6 +10,7 @@ use clap::Parser as ClapParser;
 use b_minor::{
     scan::Scanner,
     syn::Parser,
+    sem::Semantic,
 };
 
 #[derive(ClapParser, Debug)]
@@ -26,8 +27,10 @@ fn compile(args: Cli) -> Result<()> {
     let program_text = fs::read_to_string(args.input_file)?;
 
     let mut parser = Parser::new(Scanner::new(program_text.into_chars().peekable()));
+    let ast = parser.parse_top();
 
-    println!("{:?}", parser.parse_top());
+    let mut sem_analysis: Semantic = parser.into();
+    sem_analysis.resolve(&ast);
 
     Ok(())
 }
